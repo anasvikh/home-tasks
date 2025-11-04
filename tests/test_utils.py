@@ -53,7 +53,7 @@ def test_format_levels_line_lists_levels_in_order():
 
     text = format_levels_line(assignments)
 
-    assert text == "Уровни уборки: ежедневный минимум, легкая уборка, обычная уборка"
+    assert text == "Сегодня в программе: ежедневный минимум, легкая уборка, обычная уборка"
 
 
 def test_format_stats_renders_weekly_and_monthly_views():
@@ -72,7 +72,7 @@ def test_format_stats_renders_weekly_and_monthly_views():
     assert "✅" in weekly
 
     assert "📊 Статистика за месяц" in monthly
-    assert "01.01 — 0/4 😡" in monthly
+    assert "Всего — 2/8 (25%) 😞" in monthly
 
 
 def test_format_stats_handles_empty_rows():

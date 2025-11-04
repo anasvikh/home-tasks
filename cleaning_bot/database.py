@@ -126,6 +126,21 @@ class Database:
             ).fetchall()
         return [self._row_to_assignment(row) for row in rows]
 
+    def get_assignment(self, assignment_id: int) -> Optional[Assignment]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, task_date, user_id, room, level, description, completed, completed_at
+                FROM assignments
+                WHERE id=?
+                """,
+                (assignment_id,),
+            ).fetchone()
+
+        if not row:
+            return None
+        return self._row_to_assignment(row)
+
     def mark_completed(self, assignment_id: int) -> None:
         with self.connect() as conn:
             conn.execute(

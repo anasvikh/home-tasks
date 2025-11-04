@@ -51,7 +51,7 @@ def format_levels_line(assignments: Iterable[Assignment]) -> str:
     if not levels:
         return ""
     joined = ", ".join(levels)
-    return f"Уровни уборки: {joined}"
+    return f"Сегодня в программе: {joined}"
 
 
 def format_user_summary(assignments: Iterable[Assignment]) -> str:
@@ -78,10 +78,21 @@ def format_stats(period_label: str, rows: Sequence[Tuple[int, str, date, int, in
     lines = [header]
     for name in sorted(grouped.keys()):
         lines.append(f"*{name}*")
-        for task_date, completed, total in sorted(grouped[name], key=lambda item: item[0]):
-            label = _format_day_label(task_date, mode)
-            emoji = _progress_emoji(completed, total)
-            lines.append(f"{label} — {completed}/{total} {emoji}")
+        entries = sorted(grouped[name], key=lambda item: item[0])
+        if mode == "month":
+            total_completed = sum(item[1] for item in entries)
+            total_tasks = sum(item[2] for item in entries)
+            emoji = _progress_emoji(total_completed, total_tasks)
+            if total_tasks:
+                percent = round((total_completed / total_tasks) * 100)
+                lines.append(f"Всего — {total_completed}/{total_tasks} ({percent}%) {emoji}")
+            else:
+                lines.append(f"Всего — 0/0 {emoji}")
+        else:
+            for task_date, completed, total in entries:
+                label = _format_day_label(task_date, mode)
+                emoji = _progress_emoji(completed, total)
+                lines.append(f"{label} — {completed}/{total} {emoji}")
         lines.append("")
 
     return "\n".join(lines).strip()

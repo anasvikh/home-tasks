@@ -1,6 +1,6 @@
 import asyncio
 import sys
-from datetime import date
+from datetime import date, datetime
 from types import ModuleType, SimpleNamespace
 
 
@@ -18,6 +18,7 @@ def _stub_parse_mode(monkeypatch):
     monkeypatch.setitem(sys.modules, "telegram", telegram_module)
 
 from cleaning_bot import dispatcher
+from cleaning_bot.database import Assignment
 
 
 def test_welcome_on_group_mention_triggers_welcome(monkeypatch):
@@ -168,3 +169,143 @@ def test_stats_command_uses_daily_stats(monkeypatch):
 
     assert "неделю:week" in calls[0][0]
     assert "месяц:month" in calls[0][0]
+
+
+def test_on_task_completed_updates_group_message(monkeypatch):
+    _stub_parse_mode(monkeypatch)
+
+    today = date(2024, 1, 1)
+    monkeypatch.setattr(
+        dispatcher,
+        "datetime",
+        SimpleNamespace(now=lambda: datetime(2024, 1, 1)),
+    )
+
+    assignment = Assignment(
+        id=1,
+        task_date=today,
+        user_id=1,
+        room="Кухня",
+        level="ежедневный минимум",
+        description="Проверить мусор",
+        completed=False,
+        completed_at=None,
+    )
+
+    class FakeDB:
+        def __init__(self):
+            self.completed = []
+
+        def get_assignment(self, assignment_id):
+            assert assignment_id == 1
+            return assignment
+
+        def mark_completed(self, assignment_id):
+            self.completed.append(assignment_id)
+            assignment.completed = True
+
+        def list_assignments_for_user(self, task_date, user_id):
+            assert task_date == today
+            assert user_id == 1
+            return [assignment]
+
+    monkeypatch.setattr(dispatcher, "build_personal_message", lambda a, d: "updated")
+    monkeypatch.setattr(dispatcher, "build_keyboard", lambda a: "keyboard")
+
+    edited = {}
+
+    async def edit_message_text(**kwargs):
+        edited.update(kwargs)
+
+    answers = []
+
+    async def answer(text=None, **kwargs):
+        answers.append((text, kwargs))
+
+    message = SimpleNamespace(
+        text="*Настя*\nстарый текст",
+        chat=SimpleNamespace(type="group"),
+        edit_message_text=edit_message_text,
+    )
+
+    query = SimpleNamespace(
+        data="task_done:1",
+        from_user=SimpleNamespace(id=1),
+        message=message,
+        answer=answer,
+        edit_message_text=edit_message_text,
+    )
+
+    app_ctx = SimpleNamespace(
+        db=FakeDB(),
+        users=[SimpleNamespace(telegram_id=1, name="Настя")],
+    )
+    context = _build_context(app_ctx)
+    update = SimpleNamespace(callback_query=query)
+
+    asyncio.run(dispatcher.on_task_completed(update, context))
+
+    assert answers[0] == (None, {})
+    assert edited["text"] == "*Настя*\nupdated"
+    assert edited["reply_markup"] == "keyboard"
+    assert app_ctx.db.completed == [1]
+
+
+def test_on_task_completed_rejects_foreign_tasks(monkeypatch):
+    _stub_parse_mode(monkeypatch)
+
+    today = date(2024, 1, 1)
+    monkeypatch.setattr(
+        dispatcher,
+        "datetime",
+        SimpleNamespace(now=lambda: datetime(2024, 1, 1)),
+    )
+
+    assignment = Assignment(
+        id=1,
+        task_date=today,
+        user_id=1,
+        room="Кухня",
+        level="ежедневный минимум",
+        description="Проверить мусор",
+        completed=False,
+        completed_at=None,
+    )
+
+    class FakeDB:
+        def get_assignment(self, assignment_id):
+            assert assignment_id == 1
+            return assignment
+
+    answers = []
+
+    async def answer(text=None, **kwargs):
+        answers.append((text, kwargs))
+
+    async def edit_message_text(**kwargs):  # pragma: no cover - should not be called
+        raise AssertionError("edit_message_text should not be called")
+
+    message = SimpleNamespace(
+        text="*Андрей*\nстарый текст",
+        chat=SimpleNamespace(type="group"),
+        edit_message_text=edit_message_text,
+    )
+
+    query = SimpleNamespace(
+        data="task_done:1",
+        from_user=SimpleNamespace(id=2),
+        message=message,
+        answer=answer,
+        edit_message_text=edit_message_text,
+    )
+
+    app_ctx = SimpleNamespace(
+        db=FakeDB(),
+        users=[SimpleNamespace(telegram_id=1, name="Настя")],
+    )
+    context = _build_context(app_ctx)
+    update = SimpleNamespace(callback_query=query)
+
+    asyncio.run(dispatcher.on_task_completed(update, context))
+
+    assert answers == [("Эта задача закреплена за другим участником.", {"show_alert": True})]

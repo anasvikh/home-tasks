@@ -193,24 +193,34 @@ async def stats_command(update, context) -> None:
 
 async def on_task_completed(update, context) -> None:
     query = update.callback_query
-    await query.answer()
+    app_ctx = context.application.bot_data["app_context"]
 
     assignment_id = int(query.data.split(":", 1)[1])
-    app_ctx = context.application.bot_data["app_context"]
+    assignment = app_ctx.db.get_assignment(assignment_id)
+
+    if not assignment:
+        await query.answer("Не удалось найти задачу. Попробуй ещё раз позже.", show_alert=True)
+        return
+
+    user = query.from_user
+    if not user or user.id != assignment.user_id:
+        await query.answer("Эта задача закреплена за другим участником.", show_alert=True)
+        return
+
+    await query.answer()
     app_ctx.db.mark_completed(assignment_id)
 
     from telegram.constants import ParseMode
 
     today = datetime.now().date()
-    user = query.from_user
     message = query.message
-    if not user or not message:
+    if not message:
         return
 
     is_reminder = bool(message.text and message.text.startswith("Напоминание!"))
 
     if is_reminder:
-        remaining = app_ctx.db.list_incomplete_for_user(today, user.id)
+        remaining = app_ctx.db.list_incomplete_for_user(today, assignment.user_id)
         if remaining:
             levels_line = format_levels_line(remaining)
             parts = ["Напоминание! Остались невыполненные задачи:"]
@@ -222,8 +232,15 @@ async def on_task_completed(update, context) -> None:
             new_text = "Все задачи на сегодня выполнены! 🎉"
         keyboard = build_keyboard(remaining)
     else:
-        assignments = app_ctx.db.list_assignments_for_user(today, user.id)
+        assignments = app_ctx.db.list_assignments_for_user(today, assignment.user_id)
         new_text = build_personal_message(assignments, today)
+        if message.chat and message.chat.type in {"group", "supergroup"}:
+            owner_name = next(
+                (u.name for u in app_ctx.users if u.telegram_id == assignment.user_id),
+                "",
+            )
+            if owner_name:
+                new_text = f"*{owner_name}*\n{new_text}"
         keyboard = build_keyboard(assignments)
 
     await query.edit_message_text(
