@@ -7,7 +7,7 @@ from .config import SchedulerConfig
 from .data_loaders import TaskMap, User
 
 
-LEVEL_DAILY = "ежедневный минимум"
+LEVEL_DAILY = "базовый минимум"
 LEVEL_LIGHT = "легкая уборка"
 LEVEL_REGULAR = "обычная уборка"
 LEVEL_EXTENDED = "расширенная уборка"

@@ -30,7 +30,7 @@ def format_assignments(assignments: Iterable[Assignment]) -> str:
     lines: List[str] = []
     for room in sorted(grouped.keys()):
         emoji = ROOM_EMOJI.get(room, "🧹")
-        lines.append(f"{emoji} *{room}*")
+        lines.append(f"\n{emoji} *{room}*")
         ordered = sorted(
             grouped[room],
             key=lambda item: (LEVEL_ORDER.index(item.level), item.id),
@@ -51,7 +51,7 @@ def format_levels_line(assignments: Iterable[Assignment]) -> str:
     if not levels:
         return ""
     joined = ", ".join(levels)
-    return f"Сегодня в программе: {joined}"
+    return f"Сегодня по плану {joined}"
 
 
 def format_user_summary(assignments: Iterable[Assignment]) -> str:

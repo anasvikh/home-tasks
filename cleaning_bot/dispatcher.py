@@ -79,14 +79,13 @@ async def welcome_on_group_mention(update, context) -> None:
 async def welcome(update, context) -> None:
     intro = (
         "Привет! Я бот для распределения домашних дел."
-        "\n\nКаждое утро я пришлю твой список задач с кнопками для отметки"
+        "\n\nКаждое утро я буду отправлять твой список задач с кнопками для отметки"
         " выполнения, а вечером напомню о невыполненных делах."
     )
     hints = [
         "• Используй кнопку ✅ в сообщениях, чтобы отмечать завершённые задания.",
         "• Команда /tasks вернёт актуальный список дел в любой момент.",
         "• Команда /stats покажет прогресс за неделю и месяц.",
-        "• Команда /chatid вернёт идентификатор текущего чата (только для админов).",
     ]
     text = intro + "\n" + "\n".join(hints)
     await update.effective_message.reply_text(text)
@@ -380,7 +379,7 @@ def build_keyboard(assignments: List[Assignment]):
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
     buttons = [
-        [InlineKeyboardButton(text=f"✅ {a.description}", callback_data=f"task_done:{a.id}")]
+        [InlineKeyboardButton(text=f"✅ {a.room}: {a.description}", callback_data=f"task_done:{a.id}")]
         for a in assignments
         if not a.completed
     ]
@@ -402,7 +401,5 @@ def build_group_summary(
 
 def build_morning_greeting(task_date: date) -> str:
     return (
-        f"Доброе утро! ✨ Сегодня {task_date.strftime('%d.%m.%Y')}\n"
-        "Вот что запланировано на сегодня. Используйте кнопки под каждой задачей, чтобы"
-        " отмечать выполненное."
+        f"Доброе утро! ✨ Сегодня {task_date.strftime('%d.%m.%Y')}"
     )

@@ -33,7 +33,7 @@ def _assignment(
 
 def test_format_assignments_orders_and_decorates_tasks():
     assignments = [
-        _assignment(id=1, room="Кухня", level="ежедневный минимум", description="Проверить мусор"),
+        _assignment(id=1, room="Кухня", level="базовый минимум", description="Проверить мусор"),
         _assignment(
             id=2,
             room="Кухня",
@@ -60,7 +60,7 @@ def test_format_levels_line_lists_levels_in_order():
 
     text = format_levels_line(assignments)
 
-    assert text == "Сегодня в программе: ежедневный минимум, легкая уборка, обычная уборка"
+    assert text == "Сегодня по плану базовый минимум, легкая уборка, обычная уборка"
 
 
 def test_format_stats_renders_weekly_and_monthly_views():

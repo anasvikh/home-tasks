@@ -3,13 +3,13 @@ bot:
   admin_ids:
     - 356856662
     - 264011342
-  group_chat_id: -1001234567890
+  group_chat_id: "-1003204844221"
 scheduler:
   timezone: Europe/Moscow
   daily_notification_time: "10:00"
   reminder_time: "18:00"
   report_time: "22:00"
-  rotation_start: "2024-01-01"
+  rotation_start: "2025-11-01"
   extended_interval_weeks: 5
   general_interval_weeks: 26
 database:
