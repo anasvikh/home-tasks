@@ -1,0 +1,17 @@
+bot:
+  token_env: TELEGRAM_BOT_TOKEN
+  admin_ids:
+    - 123456789
+  group_chat_id: -1001234567890
+scheduler:
+  timezone: Europe/Moscow
+  daily_notification_time: "10:00"
+  reminder_time: "20:00"
+  rotation_start: "2024-01-01"
+  extended_interval_weeks: 5
+  general_interval_weeks: 26
+database:
+  path: db.sqlite3
+files:
+  tasks: cleaning_bot/tasks.json
+  users: cleaning_bot/users.json
