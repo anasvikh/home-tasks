@@ -30,6 +30,7 @@ def register_handlers(app: "Application", ctx: AppContext) -> None:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CommandHandler("chatid", chat_id))
+    app.add_handler(CommandHandler("tasks", tasks_command))
     app.add_handler(
         MessageHandler(
             filters.ChatType.PRIVATE & ~filters.COMMAND,
@@ -122,6 +123,41 @@ async def chat_id(update, context) -> None:
         "\n".join(lines),
         parse_mode=ParseMode.MARKDOWN,
     )
+
+
+async def tasks_command(update, context) -> None:
+    from telegram.constants import ParseMode
+
+    app_ctx = context.application.bot_data["app_context"]
+    today = datetime.now().date()
+    assignments_by_user = ensure_assignments_for_date(app_ctx, today)
+
+    chat = update.effective_chat
+    message = update.effective_message
+    if chat and chat.type == "private":
+        user = update.effective_user
+        user_id = user.id if user else None
+        assignments = (
+            assignments_by_user.get(user_id, []) if user_id is not None else []
+        )
+
+        if not assignments:
+            await message.reply_text(
+                "На сегодня для тебя нет назначенных задач.",
+            )
+            return
+
+        text = build_personal_message(assignments, today)
+        keyboard = build_keyboard(assignments)
+        await message.reply_text(
+            text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=keyboard,
+        )
+        return
+
+    summary = build_group_summary(app_ctx, assignments_by_user, today)
+    await message.reply_text(summary, parse_mode=ParseMode.MARKDOWN)
 
 
 async def on_task_completed(update, context) -> None:
