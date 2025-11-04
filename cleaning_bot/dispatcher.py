@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Dict, List, TYPE_CHECKING
+from typing import Dict, List, Tuple, TYPE_CHECKING
 
 from .config import AppConfig
 from .data_loaders import TaskMap, User
@@ -27,6 +27,12 @@ class AppContext:
     db: Database
     users: List[User]
     tasks: TaskMap
+
+
+@dataclass
+class GroupTaskMessage:
+    chat_id: int
+    message_id: int
 
 
 def register_handlers(app: "Application", ctx: AppContext) -> None:
@@ -148,10 +154,16 @@ async def tasks_command(update, context) -> None:
 
     sent_any = False
     for block in build_group_blocks(app_ctx, assignments_by_user, today):
-        await message.reply_text(
+        sent_message = await message.reply_text(
             block.text,
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=block.keyboard,
+        )
+        _store_group_task_message(
+            context.application,
+            today,
+            block.user_id,
+            sent_message,
         )
         sent_any = True
 
@@ -207,15 +219,16 @@ async def on_task_completed(update, context) -> None:
 
     from telegram.constants import ParseMode
 
-    today = datetime.now().date()
     message = query.message
     if not message:
+        await _refresh_group_task_message(context, assignment)
         return
 
+    task_date = assignment.task_date
     is_reminder = bool(message.text and message.text.startswith("Напоминаю"))
 
     if is_reminder:
-        remaining = app_ctx.db.list_incomplete_for_user(today, assignment.user_id)
+        remaining = app_ctx.db.list_incomplete_for_user(task_date, assignment.user_id)
         if remaining:
             levels_line = format_levels_line(remaining)
             parts = ["Напоминаю, что сегодня ещё есть невыполненные задачи:"]
@@ -227,8 +240,8 @@ async def on_task_completed(update, context) -> None:
             new_text = "Все задачи на сегодня выполнены! 🎉"
         keyboard = build_keyboard(remaining)
     else:
-        assignments = app_ctx.db.list_assignments_for_user(today, assignment.user_id)
-        new_text = build_personal_message(assignments, today)
+        assignments = app_ctx.db.list_assignments_for_user(task_date, assignment.user_id)
+        new_text = build_personal_message(assignments, task_date)
         if message.chat and message.chat.type in {"group", "supergroup"}:
             owner_name = next(
                 (u.name for u in app_ctx.users if u.telegram_id == assignment.user_id),
@@ -243,6 +256,8 @@ async def on_task_completed(update, context) -> None:
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=keyboard,
     )
+
+    await _refresh_group_task_message(context, assignment)
 
 
 async def send_daily_notifications(app) -> None:
@@ -262,12 +277,13 @@ async def send_daily_notifications(app) -> None:
 
     sent_any = False
     for block in build_group_blocks(ctx, assignments_by_user, today):
-        await app.bot.send_message(
+        sent_message = await app.bot.send_message(
             chat_id=group_chat_id,
             text=block.text,
             reply_markup=block.keyboard,
             parse_mode=ParseMode.MARKDOWN,
         )
+        _store_group_task_message(app, today, block.user_id, sent_message)
         sent_any = True
 
     if not sent_any:
@@ -349,6 +365,7 @@ def _group_by_user(assignments: List[Assignment]) -> Dict[int, List[Assignment]]
 class GroupBlock:
     text: str
     keyboard: "InlineKeyboardMarkup | None"
+    user_id: int
 
 
 def build_group_blocks(
@@ -361,7 +378,13 @@ def build_group_blocks(
             continue
         text = build_personal_message(assignments, task_date)
         keyboard = build_keyboard(assignments)
-        blocks.append(GroupBlock(text=f"*{user.name}*\n{text}", keyboard=keyboard))
+        blocks.append(
+            GroupBlock(
+                text=f"*{user.name}*\n{text}",
+                keyboard=keyboard,
+                user_id=user.telegram_id,
+            )
+        )
     return blocks
 
 
@@ -386,6 +409,64 @@ def build_keyboard(assignments: List[Assignment]):
     if not buttons:
         return None
     return InlineKeyboardMarkup(buttons)
+
+
+def _group_task_message_store(app: "Application") -> Dict[Tuple[str, int], GroupTaskMessage]:
+    return app.bot_data.setdefault("group_task_messages", {})
+
+
+def _store_group_task_message(app, task_date: date, user_id: int, message) -> None:
+    if not message:
+        return
+    store = _group_task_message_store(app)
+    store[(task_date.isoformat(), user_id)] = GroupTaskMessage(
+        chat_id=message.chat_id,
+        message_id=message.message_id,
+    )
+
+
+def _remove_group_task_message(app, task_date: date, user_id: int) -> None:
+    store = app.bot_data.get("group_task_messages")
+    if not store:
+        return
+    store.pop((task_date.isoformat(), user_id), None)
+
+
+async def _refresh_group_task_message(context, assignment: Assignment) -> None:
+    app = context.application
+    store = app.bot_data.get("group_task_messages", {})
+    key = (assignment.task_date.isoformat(), assignment.user_id)
+    message_ref = store.get(key)
+    if not message_ref:
+        return
+
+    app_ctx: AppContext = app.bot_data["app_context"]
+    assignments = app_ctx.db.list_assignments_for_user(
+        assignment.task_date,
+        assignment.user_id,
+    )
+    text = build_personal_message(assignments, assignment.task_date)
+    owner_name = next(
+        (u.name for u in app_ctx.users if u.telegram_id == assignment.user_id),
+        "",
+    )
+    if owner_name:
+        text = f"*{owner_name}*\n{text}"
+    keyboard = build_keyboard(assignments)
+
+    from telegram.constants import ParseMode
+    from telegram.error import TelegramError
+
+    try:
+        await app.bot.edit_message_text(
+            chat_id=message_ref.chat_id,
+            message_id=message_ref.message_id,
+            text=text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=keyboard,
+        )
+    except TelegramError:  # pragma: no cover - depends on Telegram API errors
+        _remove_group_task_message(app, assignment.task_date, assignment.user_id)
 
 
 def build_group_summary(

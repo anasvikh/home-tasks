@@ -14,7 +14,16 @@ def _stub_parse_mode(monkeypatch):
     constants_module.ParseMode = SimpleNamespace(MARKDOWN="Markdown")
     telegram_module = ModuleType("telegram")
     telegram_module.constants = constants_module
+    error_module = ModuleType("telegram.error")
+
+    class DummyError(Exception):
+        pass
+
+    error_module.TelegramError = DummyError
+    error_module.BadRequest = DummyError
+    telegram_module.error = error_module
     monkeypatch.setitem(sys.modules, "telegram.constants", constants_module)
+    monkeypatch.setitem(sys.modules, "telegram.error", error_module)
     monkeypatch.setitem(sys.modules, "telegram", telegram_module)
 
 from cleaning_bot import dispatcher
@@ -100,13 +109,14 @@ def test_tasks_command_group_sends_personal_blocks(monkeypatch):
     monkeypatch.setattr(dispatcher, "ensure_assignments_for_date", fake_ensure)
 
     blocks = [
-        dispatcher.GroupBlock(text="*Настя*\npersonal", keyboard="keyboard-1"),
-        dispatcher.GroupBlock(text="*Андрей*\npersonal", keyboard="keyboard-2"),
+        dispatcher.GroupBlock(text="*Настя*\npersonal", keyboard="keyboard-1", user_id=1),
+        dispatcher.GroupBlock(text="*Андрей*\npersonal", keyboard="keyboard-2", user_id=2),
     ]
     monkeypatch.setattr(dispatcher, "build_group_blocks", lambda ctx, data, day: blocks)
 
     async def reply_text(text, **kwargs):
         calls.append((text, kwargs))
+        return SimpleNamespace(chat_id=-100, message_id=len(calls))
 
     users = [SimpleNamespace(telegram_id=1, name="Настя"), SimpleNamespace(telegram_id=2, name="Андрей")]
     app_ctx = SimpleNamespace(users=users, config=None)
@@ -116,6 +126,7 @@ def test_tasks_command_group_sends_personal_blocks(monkeypatch):
         effective_user=SimpleNamespace(id=42),
     )
     context = _build_context(app_ctx)
+    context.application.bot = SimpleNamespace()
 
     asyncio.run(dispatcher.tasks_command(update, context))
 
@@ -163,7 +174,7 @@ def test_send_daily_notifications_posts_greeting_and_blocks(monkeypatch):
         lambda ctx, target: {1: ["assignment"]},
     )
 
-    block = dispatcher.GroupBlock(text="*Настя*\ntext", keyboard="keyboard")
+    block = dispatcher.GroupBlock(text="*Настя*\ntext", keyboard="keyboard", user_id=1)
     monkeypatch.setattr(dispatcher, "build_group_blocks", lambda ctx, data, day: [block])
     monkeypatch.setattr(dispatcher, "build_morning_greeting", lambda day: "greeting")
 
@@ -171,6 +182,7 @@ def test_send_daily_notifications_posts_greeting_and_blocks(monkeypatch):
 
     async def fake_send_message(**kwargs):
         sent.append(kwargs)
+        return SimpleNamespace(chat_id=kwargs["chat_id"], message_id=len(sent))
 
     app = SimpleNamespace(
         bot_data={"app_context": app_ctx},
@@ -206,6 +218,7 @@ def test_send_daily_notifications_handles_empty_assignments(monkeypatch):
 
     async def fake_send_message(**kwargs):
         sent.append(kwargs)
+        return SimpleNamespace(chat_id=kwargs.get("chat_id", 0), message_id=len(sent))
 
     app = SimpleNamespace(
         bot_data={"app_context": app_ctx},
@@ -233,6 +246,7 @@ def test_send_daily_report_uses_formatter(monkeypatch):
 
     async def fake_send_message(**kwargs):
         sent.append(kwargs)
+        return SimpleNamespace(chat_id=kwargs.get("chat_id", 0), message_id=len(sent))
 
     app = SimpleNamespace(
         bot_data={"app_context": app_ctx},
@@ -318,6 +332,11 @@ def test_on_task_completed_updates_group_message(monkeypatch):
     async def edit_message_text(**kwargs):
         edited.update(kwargs)
 
+    group_edited = {}
+
+    async def edit_group_message(**kwargs):
+        group_edited.update(kwargs)
+
     answers = []
 
     async def answer(text=None, **kwargs):
@@ -342,6 +361,10 @@ def test_on_task_completed_updates_group_message(monkeypatch):
         users=[SimpleNamespace(telegram_id=1, name="Настя")],
     )
     context = _build_context(app_ctx)
+    context.application.bot = SimpleNamespace(edit_message_text=edit_group_message)
+    context.application.bot_data["group_task_messages"] = {
+        (today.isoformat(), 1): dispatcher.GroupTaskMessage(chat_id=-100, message_id=555)
+    }
     update = SimpleNamespace(callback_query=query)
 
     asyncio.run(dispatcher.on_task_completed(update, context))
@@ -350,6 +373,10 @@ def test_on_task_completed_updates_group_message(monkeypatch):
     assert edited["text"] == "*Настя*\nupdated"
     assert edited["reply_markup"] == "keyboard"
     assert app_ctx.db.completed == [1]
+    assert group_edited["chat_id"] == -100
+    assert group_edited["message_id"] == 555
+    assert group_edited["text"] == "*Настя*\nupdated"
+    assert group_edited["reply_markup"] == "keyboard"
 
 
 def test_on_task_completed_rejects_foreign_tasks(monkeypatch):
