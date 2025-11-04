@@ -1,7 +1,8 @@
 bot:
   token_env: TELEGRAM_BOT_TOKEN
   admin_ids:
-    - 123456789
+    - 356856662
+    - 264011342
   group_chat_id: -1001234567890
 scheduler:
   timezone: Europe/Moscow
