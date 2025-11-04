@@ -6,7 +6,7 @@ from typing import Dict, List, TYPE_CHECKING
 
 from .config import AppConfig
 from .data_loaders import TaskMap, User
-from .database import Assignment
+from .database import Assignment, Database
 from .rotation import get_day_levels, rotate_rooms, weeks_between
 from .utils import format_assignments, format_stats, format_user_summary
 
@@ -29,6 +29,7 @@ def register_handlers(app: "Application", ctx: AppContext) -> None:
     app.bot_data["app_context"] = ctx
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
+    app.add_handler(CommandHandler("chatid", chat_id))
     app.add_handler(CallbackQueryHandler(on_task_completed, pattern=r"^task_done:"))
 
 
@@ -52,6 +53,30 @@ async def admin(update, context) -> None:
     rows = app_ctx.db.weekly_stats(monday, sunday)
     text = format_stats("текущую неделю", rows)
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+
+
+async def chat_id(update, context) -> None:
+    from telegram.constants import ParseMode
+
+    app_ctx = context.application.bot_data["app_context"]
+    user_id = update.effective_user.id if update.effective_user else None
+    if user_id not in app_ctx.config.bot.admin_ids:
+        await update.message.reply_text("Команда доступна только администраторам бота.")
+        return
+
+    chat = update.effective_chat
+    chat_id_value = chat.id if chat else "неизвестно"
+    lines = [f"ID этого чата: `{chat_id_value}`"]
+
+    if chat and chat.type in {"group", "supergroup"}:
+        lines.append(
+            "Добавьте это значение в `bot.group_chat_id` внутри `cleaning_bot/config.yaml`,"
+        )
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode=ParseMode.MARKDOWN,
+    )
 
 
 async def on_task_completed(update, context) -> None:
