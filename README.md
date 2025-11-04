@@ -1,2 +1,3 @@
-# home-tasks
-Telegram bot for home routine
+# CleanBot
+
+Telegram-бот для управления домашней уборкой.
