@@ -13,6 +13,14 @@ LEVEL_REGULAR = "обычная уборка"
 LEVEL_EXTENDED = "расширенная уборка"
 LEVEL_GENERAL = "генеральная уборка"
 
+LEVEL_ORDER: Sequence[str] = (
+    LEVEL_DAILY,
+    LEVEL_LIGHT,
+    LEVEL_REGULAR,
+    LEVEL_EXTENDED,
+    LEVEL_GENERAL,
+)
+
 
 def get_day_levels(target: date, cfg: SchedulerConfig) -> List[str]:
     weekday = target.weekday()
@@ -42,10 +50,17 @@ def weeks_between(start: date, target: date) -> int:
     return delta.days // 7
 
 
-WEEKLY_ROOM_GROUPS: Sequence[Sequence[str]] = (
-    ("Спальня", "Кухня", "Коридор"),
-    ("Кабинет", "Ванная", "Туалет"),
-)
+
+WEEKLY_ROOM_PLAN: Dict[str, Dict[int, Sequence[str]]] = {
+    "odd": {
+        0: ("Спальня", "Ванная", "Туалет"),
+        1: ("Кабинет", "Кухня", "Коридор"),
+    },
+    "even": {
+        0: ("Спальня", "Кухня", "Коридор"),
+        1: ("Кабинет", "Ванная", "Туалет"),
+    },
+}
 
 
 def rotate_rooms(
@@ -57,7 +72,7 @@ def rotate_rooms(
     assignments: Dict[int, List[str]] = {user.telegram_id: [] for user in users}
     used_rooms: set[str] = set()
 
-    scheduled = _assign_by_week_table(users, rooms, week_index, weekday)
+    scheduled = _assign_by_week_table(users, rooms, week_index)
     for user_id, scheduled_rooms in scheduled.items():
         assignments.setdefault(user_id, [])
         assignments[user_id].extend(scheduled_rooms)
@@ -72,29 +87,21 @@ def rotate_rooms(
 
 
 def _assign_by_week_table(
-    users: Sequence[User], rooms: Sequence[str], week_index: int, weekday: int
+    users: Sequence[User], rooms: Sequence[str], week_index: int
 ) -> Dict[int, List[str]]:
     if len(users) < 2:
         return {}
 
-    filtered_groups: List[List[str]] = [
-        [room for room in group if room in rooms] for group in WEEKLY_ROOM_GROUPS
-    ]
-
-    if not all(filtered_groups):
-        return {}
-
     week_number = week_index + 1
-    odd_week = week_number % 2 == 1
+    plan_key = "odd" if week_number % 2 == 1 else "even"
+    plan = WEEKLY_ROOM_PLAN[plan_key]
 
-    first_group_index = 0 if odd_week else 1
-    if weekday % 2 == 1:
-        first_group_index = 1 - first_group_index
-
-    assignments = {
-        users[0].telegram_id: list(filtered_groups[first_group_index]),
-        users[1].telegram_id: list(filtered_groups[1 - first_group_index]),
-    }
+    assignments: Dict[int, List[str]] = {}
+    for user_index, room_list in plan.items():
+        if user_index >= len(users):
+            continue
+        filtered = [room for room in room_list if room in rooms]
+        assignments[users[user_index].telegram_id] = filtered
     return assignments
 
 
@@ -112,3 +119,19 @@ def ensure_level_available(tasks: TaskMap, level: str) -> None:
     missing = [room for room, room_tasks in tasks.items() if level not in room_tasks]
     if missing:
         raise ValueError(f"Level '{level}' missing for rooms: {', '.join(missing)}")
+
+
+def expand_levels(levels: Sequence[str]) -> List[str]:
+    if not levels:
+        return []
+
+    max_index = -1
+    for level in levels:
+        try:
+            idx = LEVEL_ORDER.index(level)
+        except ValueError as exc:  # pragma: no cover - guard clause
+            raise ValueError(f"Unknown level: {level}") from exc
+        if idx > max_index:
+            max_index = idx
+
+    return list(LEVEL_ORDER[: max_index + 1])

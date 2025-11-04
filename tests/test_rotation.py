@@ -9,6 +9,7 @@ from cleaning_bot.rotation import (
     LEVEL_GENERAL,
     LEVEL_LIGHT,
     LEVEL_REGULAR,
+    expand_levels,
     get_day_levels,
     rotate_rooms,
     weeks_between,
@@ -73,10 +74,10 @@ def test_rotate_rooms_odd_week_pattern():
         "Кабинет",
         "Коридор",
     ]
-    # week_index=0 -> first week (odd), Monday -> weekday=0
+    # week_index=0 -> first week (odd)
     assignments = rotate_rooms(users, rooms, week_index=0, weekday=0)
-    assert assignments[1] == ["Спальня", "Кухня", "Коридор"]
-    assert assignments[2] == ["Кабинет", "Ванная", "Туалет"]
+    assert assignments[1] == ["Спальня", "Ванная", "Туалет"]
+    assert assignments[2] == ["Кабинет", "Кухня", "Коридор"]
 
 
 def test_rotate_rooms_even_week_pattern():
@@ -89,25 +90,20 @@ def test_rotate_rooms_even_week_pattern():
         "Кабинет",
         "Коридор",
     ]
-    # week_index=1 -> second week (even), Tuesday -> weekday=1
+    # week_index=1 -> second week (even)
     assignments = rotate_rooms(users, rooms, week_index=1, weekday=1)
     assert assignments[1] == ["Спальня", "Кухня", "Коридор"]
     assert assignments[2] == ["Кабинет", "Ванная", "Туалет"]
 
 
-def test_rotate_rooms_even_week_monday_swapped():
-    users = [User(telegram_id=1, name="Настя"), User(telegram_id=2, name="Андрей")]
-    rooms = [
-        "Кухня",
-        "Ванная",
-        "Туалет",
-        "Спальня",
-        "Кабинет",
-        "Коридор",
+def test_expand_levels_includes_previous():
+    assert expand_levels([LEVEL_GENERAL]) == [
+        LEVEL_DAILY,
+        LEVEL_LIGHT,
+        LEVEL_REGULAR,
+        LEVEL_EXTENDED,
+        LEVEL_GENERAL,
     ]
-    assignments = rotate_rooms(users, rooms, week_index=1, weekday=0)
-    assert assignments[1] == ["Кабинет", "Ванная", "Туалет"]
-    assert assignments[2] == ["Спальня", "Кухня", "Коридор"]
 
 
 def test_weeks_between_before_start():

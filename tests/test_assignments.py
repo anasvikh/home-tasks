@@ -28,6 +28,7 @@ def build_context(tmp_path):
     tasks: TaskMap = {
         "Кухня": {
             "ежедневный минимум": ["Задача 1"],
+            "легкая уборка": ["Задача 1.5"],
             "обычная уборка": ["Задача 2"],
         }
     }
@@ -43,8 +44,8 @@ def test_ensure_assignments_creates_records(tmp_path):
     target = date(2024, 1, 6)  # Saturday -> regular cleaning
     assignments = ensure_assignments_for_date(ctx, target)
     assert 1 in assignments
-    # daily + regular -> 2 tasks
-    assert len(assignments[1]) == 2
+    # regular уровень включает ежедневный, лёгкий и обычный -> 3 задания
+    assert len(assignments[1]) == 3
 
 
 def test_ensure_assignments_idempotent(tmp_path):

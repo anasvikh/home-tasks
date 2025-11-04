@@ -7,7 +7,7 @@ from typing import Dict, List, TYPE_CHECKING
 from .config import AppConfig
 from .data_loaders import TaskMap, User
 from .database import Assignment, Database
-from .rotation import get_day_levels, rotate_rooms, weeks_between
+from .rotation import expand_levels, get_day_levels, rotate_rooms, weeks_between
 from .utils import format_assignments, format_stats, format_user_summary
 
 if TYPE_CHECKING:  # pragma: no cover - typing helper
@@ -235,7 +235,7 @@ def ensure_assignments_for_date(ctx: AppContext, target: date) -> Dict[int, List
     if assignments:
         return _group_by_user(assignments)
 
-    levels = get_day_levels(target, ctx.config.scheduler)
+    levels = expand_levels(get_day_levels(target, ctx.config.scheduler))
     rooms = list(ctx.tasks.keys())
     week_index = weeks_between(ctx.config.scheduler.rotation_start, target)
     room_rotation = rotate_rooms(ctx.users, rooms, week_index, target.weekday())
