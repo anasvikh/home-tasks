@@ -24,19 +24,38 @@ class AppContext:
 
 
 def register_handlers(app: "Application", ctx: AppContext) -> None:
-    from telegram.ext import CallbackQueryHandler, CommandHandler
+    from telegram.ext import CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
     app.bot_data["app_context"] = ctx
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CommandHandler("chatid", chat_id))
+    app.add_handler(
+        MessageHandler(
+            filters.ChatType.PRIVATE & ~filters.COMMAND,
+            welcome,
+        )
+    )
     app.add_handler(CallbackQueryHandler(on_task_completed, pattern=r"^task_done:"))
 
 
 async def start(update, context) -> None:
-    await update.message.reply_text(
-        "Привет! Я помогу с распределением домашних дел. Ожидай ежедневные задачи."
+    await welcome(update, context)
+
+
+async def welcome(update, context) -> None:
+    intro = (
+        "Привет! Я бот для распределения домашних дел."
+        "\n\nКаждое утро я пришлю твой список задач с кнопками для отметки"
+        " выполнения, а вечером напомню о невыполненных делах."
     )
+    hints = [
+        "• Используй кнопку ✅ в сообщениях, чтобы отмечать завершённые задания.",
+        "• Команда /admin доступна администраторам и показывает статистику.",
+        "• Команда /chatid вернёт идентификатор текущего чата (только для админов).",
+    ]
+    text = intro + "\n" + "\n".join(hints)
+    await update.effective_message.reply_text(text)
 
 
 async def admin(update, context) -> None:
