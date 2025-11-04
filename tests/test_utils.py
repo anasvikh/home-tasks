@@ -1,7 +1,7 @@
 from datetime import date
 
 from cleaning_bot.database import Assignment
-from cleaning_bot.utils import format_assignments, format_levels_line
+from cleaning_bot.utils import format_assignments, format_levels_line, format_stats
 
 
 def _assignment(
@@ -54,3 +54,27 @@ def test_format_levels_line_lists_levels_in_order():
     text = format_levels_line(assignments)
 
     assert text == "Уровни уборки: ежедневный минимум, легкая уборка, обычная уборка"
+
+
+def test_format_stats_renders_weekly_and_monthly_views():
+    rows = [
+        (1, "Настя", date(2024, 1, 1), 0, 4),
+        (1, "Настя", date(2024, 1, 2), 2, 4),
+        (2, "Андрей", date(2024, 1, 1), 4, 4),
+    ]
+
+    weekly = format_stats("неделю", rows, mode="week")
+    monthly = format_stats("месяц", rows, mode="month")
+
+    assert "📊 Статистика за неделю" in weekly
+    assert "пн — 0/4 😡" in weekly
+    assert "вт — 2/4 😐" in weekly
+    assert "✅" in weekly
+
+    assert "📊 Статистика за месяц" in monthly
+    assert "01.01 — 0/4 😡" in monthly
+
+
+def test_format_stats_handles_empty_rows():
+    text = format_stats("неделю", [], mode="week")
+    assert text.endswith("Пока нет данных")

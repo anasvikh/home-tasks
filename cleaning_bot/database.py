@@ -146,22 +146,35 @@ class Database:
             ).fetchall()
         return [self._row_to_assignment(row) for row in rows]
 
-    def weekly_stats(self, week_start: date, week_end: date) -> List[Tuple[int, str, int, int]]:
+    def daily_stats(self, start: date, end: date) -> List[Tuple[int, str, date, int, int]]:
         with self.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT u.telegram_id, u.name,
+                SELECT a.user_id, u.name, a.task_date,
                        SUM(CASE WHEN a.completed=1 THEN 1 ELSE 0 END) AS completed_count,
                        COUNT(*) AS total
                 FROM assignments a
                 JOIN users u ON u.telegram_id = a.user_id
                 WHERE a.task_date BETWEEN ? AND ?
-                GROUP BY u.telegram_id, u.name
-                ORDER BY u.name
+                GROUP BY a.user_id, u.name, a.task_date
+                ORDER BY u.name, a.task_date
                 """,
-                (week_start.isoformat(), week_end.isoformat()),
+                (start.isoformat(), end.isoformat()),
             ).fetchall()
-        return [(int(r[0]), str(r[1]), int(r[2] or 0), int(r[3])) for r in rows]
+
+        results: List[Tuple[int, str, date, int, int]] = []
+        for row in rows:
+            task_date = date.fromisoformat(str(row[2]))
+            results.append(
+                (
+                    int(row[0]),
+                    str(row[1]),
+                    task_date,
+                    int(row[3] or 0),
+                    int(row[4] or 0),
+                )
+            )
+        return results
 
     @staticmethod
     def _row_to_assignment(row: sqlite3.Row) -> Assignment:

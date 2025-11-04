@@ -33,9 +33,9 @@ def register_handlers(app: "Application", ctx: AppContext) -> None:
 
     app.bot_data["app_context"] = ctx
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CommandHandler("chatid", chat_id))
     app.add_handler(CommandHandler("tasks", tasks_command))
+    app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(
         MessageHandler(
             filters.ChatType.PRIVATE & ~filters.COMMAND,
@@ -83,27 +83,12 @@ async def welcome(update, context) -> None:
     )
     hints = [
         "• Используй кнопку ✅ в сообщениях, чтобы отмечать завершённые задания.",
-        "• Команда /admin доступна администраторам и показывает статистику.",
+        "• Команда /tasks вернёт актуальный список дел в любой момент.",
+        "• Команда /stats покажет прогресс за неделю и месяц.",
         "• Команда /chatid вернёт идентификатор текущего чата (только для админов).",
     ]
     text = intro + "\n" + "\n".join(hints)
     await update.effective_message.reply_text(text)
-
-
-async def admin(update, context) -> None:
-    from telegram.constants import ParseMode
-
-    app_ctx = context.application.bot_data["app_context"]
-    if update.effective_user.id not in app_ctx.config.bot.admin_ids:
-        await update.message.reply_text("У вас нет доступа к админской информации")
-        return
-
-    today = datetime.now().date()
-    monday = today - timedelta(days=today.weekday())
-    sunday = monday + timedelta(days=6)
-    rows = app_ctx.db.weekly_stats(monday, sunday)
-    text = format_stats("текущую неделю", rows)
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
 
 async def chat_id(update, context) -> None:
@@ -161,8 +146,49 @@ async def tasks_command(update, context) -> None:
         )
         return
 
-    summary = build_group_summary(app_ctx, assignments_by_user, today)
-    await message.reply_text(summary, parse_mode=ParseMode.MARKDOWN)
+    sent_any = False
+    for user in app_ctx.users:
+        assignments = assignments_by_user.get(user.telegram_id, [])
+        if not assignments:
+            continue
+        text = build_personal_message(assignments, today)
+        keyboard = build_keyboard(assignments)
+        await message.reply_text(
+            f"*{user.name}*\n{text}",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=keyboard,
+        )
+        sent_any = True
+
+    if not sent_any:
+        await message.reply_text(
+            "Сегодня задач нет.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+
+async def stats_command(update, context) -> None:
+    from telegram.constants import ParseMode
+
+    app_ctx = context.application.bot_data["app_context"]
+    today = datetime.now().date()
+
+    week_start = today - timedelta(days=today.weekday())
+    week_end = week_start + timedelta(days=6)
+    month_start = today.replace(day=1)
+
+    week_rows = app_ctx.db.daily_stats(week_start, week_end)
+    month_rows = app_ctx.db.daily_stats(month_start, today)
+
+    parts = [
+        format_stats("неделю", week_rows, mode="week"),
+        format_stats("месяц", month_rows, mode="month"),
+    ]
+    text = "\n\n".join(part for part in parts if part)
+    if not text:
+        text = "Пока нет данных для отображения статистики."
+
+    await update.effective_message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
 
 async def on_task_completed(update, context) -> None:
