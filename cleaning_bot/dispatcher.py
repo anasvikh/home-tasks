@@ -132,7 +132,7 @@ def ensure_assignments_for_date(ctx: AppContext, target: date) -> Dict[int, List
     levels = get_day_levels(target, ctx.config.scheduler)
     rooms = list(ctx.tasks.keys())
     week_index = weeks_between(ctx.config.scheduler.rotation_start, target)
-    room_rotation = rotate_rooms(ctx.users, rooms, week_index)
+    room_rotation = rotate_rooms(ctx.users, rooms, week_index, target.weekday())
 
     for user in ctx.users:
         assigned_rooms = room_rotation.get(user.telegram_id, [])

@@ -63,12 +63,51 @@ def test_get_day_levels_general_every_26_weeks():
     assert LEVEL_EXTENDED not in levels
 
 
-def test_rotate_rooms_round_robin():
-    users = [User(telegram_id=1, name="A"), User(telegram_id=2, name="B")]
-    rooms = ["Кухня", "Ванная", "Туалет"]
-    assignments = rotate_rooms(users, rooms, week_index=1)
-    assert assignments[1] == ["Ванная"]
-    assert assignments[2] == ["Кухня", "Туалет"]
+def test_rotate_rooms_odd_week_pattern():
+    users = [User(telegram_id=1, name="Настя"), User(telegram_id=2, name="Андрей")]
+    rooms = [
+        "Кухня",
+        "Ванная",
+        "Туалет",
+        "Спальня",
+        "Кабинет",
+        "Коридор",
+    ]
+    # week_index=0 -> first week (odd), Monday -> weekday=0
+    assignments = rotate_rooms(users, rooms, week_index=0, weekday=0)
+    assert assignments[1] == ["Спальня", "Кухня", "Коридор"]
+    assert assignments[2] == ["Кабинет", "Ванная", "Туалет"]
+
+
+def test_rotate_rooms_even_week_pattern():
+    users = [User(telegram_id=1, name="Настя"), User(telegram_id=2, name="Андрей")]
+    rooms = [
+        "Кухня",
+        "Ванная",
+        "Туалет",
+        "Спальня",
+        "Кабинет",
+        "Коридор",
+    ]
+    # week_index=1 -> second week (even), Tuesday -> weekday=1
+    assignments = rotate_rooms(users, rooms, week_index=1, weekday=1)
+    assert assignments[1] == ["Спальня", "Кухня", "Коридор"]
+    assert assignments[2] == ["Кабинет", "Ванная", "Туалет"]
+
+
+def test_rotate_rooms_even_week_monday_swapped():
+    users = [User(telegram_id=1, name="Настя"), User(telegram_id=2, name="Андрей")]
+    rooms = [
+        "Кухня",
+        "Ванная",
+        "Туалет",
+        "Спальня",
+        "Кабинет",
+        "Коридор",
+    ]
+    assignments = rotate_rooms(users, rooms, week_index=1, weekday=0)
+    assert assignments[1] == ["Кабинет", "Ванная", "Туалет"]
+    assert assignments[2] == ["Спальня", "Кухня", "Коридор"]
 
 
 def test_weeks_between_before_start():
