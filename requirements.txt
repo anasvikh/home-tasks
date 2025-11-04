@@ -1,3 +1,0 @@
-python-telegram-bot==13.17
-apscheduler
-flask
