@@ -8,7 +8,12 @@ from .config import AppConfig
 from .data_loaders import TaskMap, User
 from .database import Assignment, Database
 from .rotation import expand_levels, get_day_levels, rotate_rooms, weeks_between
-from .utils import format_assignments, format_stats, format_user_summary
+from .utils import (
+    format_assignments,
+    format_levels_line,
+    format_stats,
+    format_user_summary,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing helper
     from telegram import InlineKeyboardMarkup, Update
@@ -168,20 +173,38 @@ async def on_task_completed(update, context) -> None:
     app_ctx = context.application.bot_data["app_context"]
     app_ctx.db.mark_completed(assignment_id)
 
-    assignment = next(
-        (
-            item
-            for item in app_ctx.db.list_assignments(
-                datetime.now().date()
-            )
-            if item.id == assignment_id
-        ),
-        None,
+    from telegram.constants import ParseMode
+
+    today = datetime.now().date()
+    user = query.from_user
+    message = query.message
+    if not user or not message:
+        return
+
+    is_reminder = bool(message.text and message.text.startswith("Напоминание!"))
+
+    if is_reminder:
+        remaining = app_ctx.db.list_incomplete_for_user(today, user.id)
+        if remaining:
+            levels_line = format_levels_line(remaining)
+            parts = ["Напоминание! Остались невыполненные задачи:"]
+            if levels_line:
+                parts.append(levels_line)
+            parts.append(format_assignments(remaining))
+            new_text = "\n".join(parts)
+        else:
+            new_text = "Все задачи на сегодня выполнены! 🎉"
+        keyboard = build_keyboard(remaining)
+    else:
+        assignments = app_ctx.db.list_assignments_for_user(today, user.id)
+        new_text = build_personal_message(assignments, today)
+        keyboard = build_keyboard(assignments)
+
+    await query.edit_message_text(
+        text=new_text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=keyboard,
     )
-    if assignment:
-        await query.edit_message_text(
-            text=f"✅ Задача выполнена: {assignment.description}",
-        )
 
 
 async def send_daily_notifications(app) -> None:
@@ -220,7 +243,12 @@ async def send_evening_reminders(app) -> None:
         incomplete = ctx.db.list_incomplete_for_user(today, user.telegram_id)
         if not incomplete:
             continue
-        text = "Напоминание! Остались невыполненные задачи:\n" + format_assignments(incomplete)
+        levels_line = format_levels_line(incomplete)
+        parts = ["Напоминание! Остались невыполненные задачи:"]
+        if levels_line:
+            parts.append(levels_line)
+        parts.append(format_assignments(incomplete))
+        text = "\n".join(parts)
         keyboard = build_keyboard(incomplete)
         await app.bot.send_message(
             chat_id=user.telegram_id,
@@ -261,7 +289,12 @@ def _group_by_user(assignments: List[Assignment]) -> Dict[int, List[Assignment]]
 
 def build_personal_message(assignments: List[Assignment], task_date: date) -> str:
     header = f"🧽 Задачи на {task_date.strftime('%d.%m.%Y')}"
-    return header + "\n" + format_assignments(assignments)
+    levels_line = format_levels_line(assignments)
+    parts = [header]
+    if levels_line:
+        parts.append(levels_line)
+    parts.append(format_assignments(assignments))
+    return "\n".join(parts)
 
 
 def build_keyboard(assignments: List[Assignment]):
@@ -272,7 +305,9 @@ def build_keyboard(assignments: List[Assignment]):
         for a in assignments
         if not a.completed
     ]
-    return InlineKeyboardMarkup(buttons) if buttons else InlineKeyboardMarkup([])
+    if not buttons:
+        return None
+    return InlineKeyboardMarkup(buttons)
 
 
 def build_group_summary(
