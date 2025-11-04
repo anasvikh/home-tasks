@@ -35,6 +35,12 @@ class GroupTaskMessage:
     message_id: int
 
 
+@dataclass
+class PersonalTaskMessage:
+    chat_id: int
+    message_id: int
+
+
 def register_handlers(app: "Application", ctx: AppContext) -> None:
     from telegram.ext import CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
@@ -145,10 +151,16 @@ async def tasks_command(update, context) -> None:
 
         text = build_personal_message(assignments, today)
         keyboard = build_keyboard(assignments)
-        await message.reply_text(
+        sent_message = await message.reply_text(
             text,
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=keyboard,
+        )
+        _store_personal_task_message(
+            context.application,
+            today,
+            user_id,
+            sent_message,
         )
         return
 
@@ -258,6 +270,7 @@ async def on_task_completed(update, context) -> None:
     )
 
     await _refresh_group_task_message(context, assignment)
+    await _refresh_personal_task_message(context, assignment)
 
 
 async def send_daily_notifications(app) -> None:
@@ -310,12 +323,13 @@ async def send_evening_reminders(app) -> None:
         parts.append(format_assignments(incomplete))
         text = "\n".join(parts)
         keyboard = build_keyboard(incomplete)
-        await app.bot.send_message(
+        sent_message = await app.bot.send_message(
             chat_id=user.telegram_id,
             text=text,
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=keyboard,
         )
+        _store_personal_task_message(app, today, user.telegram_id, sent_message)
 
 
 async def send_daily_report(app) -> None:
@@ -467,6 +481,58 @@ async def _refresh_group_task_message(context, assignment: Assignment) -> None:
         )
     except TelegramError:  # pragma: no cover - depends on Telegram API errors
         _remove_group_task_message(app, assignment.task_date, assignment.user_id)
+
+
+def _personal_task_message_store(app: "Application") -> Dict[Tuple[str, int], PersonalTaskMessage]:
+    return app.bot_data.setdefault("personal_task_messages", {})
+
+
+def _store_personal_task_message(app, task_date: date, user_id: int, message) -> None:
+    if not message:
+        return
+    store = _personal_task_message_store(app)
+    store[(task_date.isoformat(), user_id)] = PersonalTaskMessage(
+        chat_id=message.chat_id,
+        message_id=message.message_id,
+    )
+
+
+def _remove_personal_task_message(app, task_date: date, user_id: int) -> None:
+    store = app.bot_data.get("personal_task_messages")
+    if not store:
+        return
+    store.pop((task_date.isoformat(), user_id), None)
+
+
+async def _refresh_personal_task_message(context, assignment: Assignment) -> None:
+    app = context.application
+    store = app.bot_data.get("personal_task_messages", {})
+    key = (assignment.task_date.isoformat(), assignment.user_id)
+    message_ref = store.get(key)
+    if not message_ref:
+        return
+
+    app_ctx: AppContext = app.bot_data["app_context"]
+    assignments = app_ctx.db.list_assignments_for_user(
+        assignment.task_date,
+        assignment.user_id,
+    )
+    text = build_personal_message(assignments, assignment.task_date)
+    keyboard = build_keyboard(assignments)
+
+    from telegram.constants import ParseMode
+    from telegram.error import TelegramError
+
+    try:
+        await app.bot.edit_message_text(
+            chat_id=message_ref.chat_id,
+            message_id=message_ref.message_id,
+            text=text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=keyboard,
+        )
+    except TelegramError:  # pragma: no cover - depends on Telegram API errors
+        _remove_personal_task_message(app, assignment.task_date, assignment.user_id)
 
 
 def build_group_summary(
