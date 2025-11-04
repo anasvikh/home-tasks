@@ -82,7 +82,7 @@ def format_stats(period_label: str, rows: Sequence[Tuple[int, str, date, int, in
         if mode == "month":
             total_completed = sum(item[1] for item in entries)
             total_tasks = sum(item[2] for item in entries)
-            emoji = _progress_emoji(total_completed, total_tasks)
+            emoji = progress_emoji(total_completed, total_tasks)
             if total_tasks:
                 percent = round((total_completed / total_tasks) * 100)
                 lines.append(f"Всего — {total_completed}/{total_tasks} ({percent}%) {emoji}")
@@ -91,7 +91,7 @@ def format_stats(period_label: str, rows: Sequence[Tuple[int, str, date, int, in
         else:
             for task_date, completed, total in entries:
                 label = _format_day_label(task_date, mode)
-                emoji = _progress_emoji(completed, total)
+                emoji = progress_emoji(completed, total)
                 lines.append(f"{label} — {completed}/{total} {emoji}")
         lines.append("")
 
@@ -105,7 +105,7 @@ def _format_day_label(task_date: date, mode: str) -> str:
     return task_date.strftime("%d.%m")
 
 
-def _progress_emoji(completed: int, total: int) -> str:
+def progress_emoji(completed: int, total: int) -> str:
     if total == 0:
         return "-"
     if completed == 0:
@@ -127,3 +127,23 @@ def _levels_for_assignments(assignments: Iterable[Assignment]) -> List[str]:
         return []
     max_index = max(LEVEL_ORDER.index(level) for level in available)
     return list(LEVEL_ORDER[: max_index + 1])
+
+
+def format_daily_report(
+    task_date: date, rows: Sequence[Tuple[int, str, date, int, int]]
+) -> str:
+    header = f"📅 Подведем итоги за {task_date.strftime('%d.%m.%Y')}"
+    if not rows:
+        return header + "\nНет данных за сегодня."
+
+    totals: Dict[str, Tuple[int, int]] = defaultdict(lambda: (0, 0))
+    for _, name, _, completed, total in rows:
+        prev_completed, prev_total = totals[name]
+        totals[name] = (prev_completed + completed, prev_total + total)
+
+    lines = [header]
+    for name in sorted(totals.keys()):
+        completed, total = totals[name]
+        emoji = progress_emoji(completed, total)
+        lines.append(f"• {name}: {completed}/{total} задач выполнено {emoji}")
+    return "\n".join(lines)

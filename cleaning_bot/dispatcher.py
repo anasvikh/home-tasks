@@ -10,6 +10,7 @@ from .database import Assignment, Database
 from .rotation import expand_levels, get_day_levels, rotate_rooms, weeks_between
 from .utils import (
     format_assignments,
+    format_daily_report,
     format_levels_line,
     format_stats,
     format_user_summary,
@@ -147,16 +148,11 @@ async def tasks_command(update, context) -> None:
         return
 
     sent_any = False
-    for user in app_ctx.users:
-        assignments = assignments_by_user.get(user.telegram_id, [])
-        if not assignments:
-            continue
-        text = build_personal_message(assignments, today)
-        keyboard = build_keyboard(assignments)
+    for block in build_group_blocks(app_ctx, assignments_by_user, today):
         await message.reply_text(
-            f"*{user.name}*\n{text}",
+            block.text,
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=keyboard,
+            reply_markup=block.keyboard,
         )
         sent_any = True
 
@@ -217,13 +213,13 @@ async def on_task_completed(update, context) -> None:
     if not message:
         return
 
-    is_reminder = bool(message.text and message.text.startswith("Напоминание!"))
+    is_reminder = bool(message.text and message.text.startswith("Напоминаю"))
 
     if is_reminder:
         remaining = app_ctx.db.list_incomplete_for_user(today, assignment.user_id)
         if remaining:
             levels_line = format_levels_line(remaining)
-            parts = ["Напоминание! Остались невыполненные задачи:"]
+            parts = ["Напоминаю, что сегодня ещё есть невыполненные задачи:"]
             if levels_line:
                 parts.append(levels_line)
             parts.append(format_assignments(remaining))
@@ -256,25 +252,31 @@ async def send_daily_notifications(app) -> None:
     ctx: AppContext = app.bot_data["app_context"]
     today = datetime.now().date()
     assignments_by_user = ensure_assignments_for_date(ctx, today)
+    group_chat_id = ctx.config.bot.group_chat_id
 
-    for user_id, assignments in assignments_by_user.items():
-        if not assignments:
-            continue
-        text = build_personal_message(assignments, today)
-        keyboard = build_keyboard(assignments)
-        await app.bot.send_message(
-            chat_id=user_id,
-            text=text,
-            reply_markup=keyboard,
-            parse_mode=ParseMode.MARKDOWN,
-        )
-
-    summary = build_group_summary(ctx, assignments_by_user, today)
+    greeting = build_morning_greeting(today)
     await app.bot.send_message(
-        chat_id=ctx.config.bot.group_chat_id,
-        text=summary,
+        chat_id=group_chat_id,
+        text=greeting,
         parse_mode=ParseMode.MARKDOWN,
     )
+
+    sent_any = False
+    for block in build_group_blocks(ctx, assignments_by_user, today):
+        await app.bot.send_message(
+            chat_id=group_chat_id,
+            text=block.text,
+            reply_markup=block.keyboard,
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        sent_any = True
+
+    if not sent_any:
+        await app.bot.send_message(
+            chat_id=group_chat_id,
+            text="Сегодня задач нет.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
 
 
 async def send_evening_reminders(app) -> None:
@@ -287,7 +289,7 @@ async def send_evening_reminders(app) -> None:
         if not incomplete:
             continue
         levels_line = format_levels_line(incomplete)
-        parts = ["Напоминание! Остались невыполненные задачи:"]
+        parts = ["Напоминаю, что сегодня ещё есть невыполненные задачи:"]
         if levels_line:
             parts.append(levels_line)
         parts.append(format_assignments(incomplete))
@@ -299,6 +301,20 @@ async def send_evening_reminders(app) -> None:
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=keyboard,
         )
+
+
+async def send_daily_report(app) -> None:
+    from telegram.constants import ParseMode
+
+    ctx: AppContext = app.bot_data["app_context"]
+    today = datetime.now().date()
+    rows = ctx.db.daily_stats(today, today)
+    report = format_daily_report(today, rows)
+    await app.bot.send_message(
+        chat_id=ctx.config.bot.group_chat_id,
+        text=report,
+        parse_mode=ParseMode.MARKDOWN,
+    )
 
 
 def ensure_assignments_for_date(ctx: AppContext, target: date) -> Dict[int, List[Assignment]]:
@@ -328,6 +344,26 @@ def _group_by_user(assignments: List[Assignment]) -> Dict[int, List[Assignment]]
     for assignment in assignments:
         grouped.setdefault(assignment.user_id, []).append(assignment)
     return grouped
+
+
+@dataclass
+class GroupBlock:
+    text: str
+    keyboard: "InlineKeyboardMarkup | None"
+
+
+def build_group_blocks(
+    ctx: AppContext, assignments_by_user: Dict[int, List[Assignment]], task_date: date
+) -> List[GroupBlock]:
+    blocks: List[GroupBlock] = []
+    for user in ctx.users:
+        assignments = assignments_by_user.get(user.telegram_id, [])
+        if not assignments:
+            continue
+        text = build_personal_message(assignments, task_date)
+        keyboard = build_keyboard(assignments)
+        blocks.append(GroupBlock(text=f"*{user.name}*\n{text}", keyboard=keyboard))
+    return blocks
 
 
 def build_personal_message(assignments: List[Assignment], task_date: date) -> str:
@@ -362,3 +398,11 @@ def build_group_summary(
         summary = format_user_summary(assignments)
         lines.append(f"• *{user.name}*: {summary}")
     return "\n".join(lines)
+
+
+def build_morning_greeting(task_date: date) -> str:
+    return (
+        f"Доброе утро! ✨ Сегодня {task_date.strftime('%d.%m.%Y')}\n"
+        "Вот что запланировано на сегодня. Используйте кнопки под каждой задачей, чтобы"
+        " отмечать выполненное."
+    )

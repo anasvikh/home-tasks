@@ -14,7 +14,8 @@ def build_context(tmp_path):
     scheduler = SchedulerConfig(
         timezone="UTC",
         daily_notification_time="10:00",
-        reminder_time="20:00",
+        reminder_time="18:00",
+        report_time="22:00",
         rotation_start=date(2024, 1, 1),
         extended_interval_weeks=5,
         general_interval_weeks=26,

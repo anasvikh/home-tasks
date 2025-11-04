@@ -98,8 +98,12 @@ def test_tasks_command_group_sends_personal_blocks(monkeypatch):
         return {1: ["assignment-1"], 2: ["assignment-2"]}
 
     monkeypatch.setattr(dispatcher, "ensure_assignments_for_date", fake_ensure)
-    monkeypatch.setattr(dispatcher, "build_personal_message", lambda a, d: "personal")
-    monkeypatch.setattr(dispatcher, "build_keyboard", lambda a: "keyboard")
+
+    blocks = [
+        dispatcher.GroupBlock(text="*Настя*\npersonal", keyboard="keyboard-1"),
+        dispatcher.GroupBlock(text="*Андрей*\npersonal", keyboard="keyboard-2"),
+    ]
+    monkeypatch.setattr(dispatcher, "build_group_blocks", lambda ctx, data, day: blocks)
 
     async def reply_text(text, **kwargs):
         calls.append((text, kwargs))
@@ -116,9 +120,9 @@ def test_tasks_command_group_sends_personal_blocks(monkeypatch):
     asyncio.run(dispatcher.tasks_command(update, context))
 
     assert len(calls) == 2
-    assert calls[0][0].startswith("*Настя*\npersonal")
-    assert calls[1][0].startswith("*Андрей*\npersonal")
-    assert calls[0][1]["reply_markup"] == "keyboard"
+    assert calls[0][0] == "*Настя*\npersonal"
+    assert calls[1][0] == "*Андрей*\npersonal"
+    assert calls[0][1]["reply_markup"] == "keyboard-1"
 
 
 def test_tasks_command_group_handles_empty(monkeypatch):
@@ -126,6 +130,7 @@ def test_tasks_command_group_handles_empty(monkeypatch):
     _stub_parse_mode(monkeypatch)
 
     monkeypatch.setattr(dispatcher, "ensure_assignments_for_date", lambda ctx, target: {})
+    monkeypatch.setattr(dispatcher, "build_group_blocks", lambda ctx, data, day: [])
 
     async def reply_text(text, **kwargs):
         calls.append((text, kwargs))
@@ -141,6 +146,102 @@ def test_tasks_command_group_handles_empty(monkeypatch):
     asyncio.run(dispatcher.tasks_command(update, context))
 
     assert calls == [("Сегодня задач нет.", {"parse_mode": "Markdown"})]
+
+
+def test_send_daily_notifications_posts_greeting_and_blocks(monkeypatch):
+    _stub_parse_mode(monkeypatch)
+
+    app_ctx = SimpleNamespace(
+        users=[SimpleNamespace(telegram_id=1, name="Настя")],
+        config=SimpleNamespace(bot=SimpleNamespace(group_chat_id=-100)),
+        db=SimpleNamespace(),
+    )
+
+    monkeypatch.setattr(
+        dispatcher,
+        "ensure_assignments_for_date",
+        lambda ctx, target: {1: ["assignment"]},
+    )
+
+    block = dispatcher.GroupBlock(text="*Настя*\ntext", keyboard="keyboard")
+    monkeypatch.setattr(dispatcher, "build_group_blocks", lambda ctx, data, day: [block])
+    monkeypatch.setattr(dispatcher, "build_morning_greeting", lambda day: "greeting")
+
+    sent = []
+
+    async def fake_send_message(**kwargs):
+        sent.append(kwargs)
+
+    app = SimpleNamespace(
+        bot_data={"app_context": app_ctx},
+        bot=SimpleNamespace(send_message=fake_send_message),
+    )
+
+    asyncio.run(dispatcher.send_daily_notifications(app))
+
+    assert sent[0]["chat_id"] == -100
+    assert sent[0]["text"] == "greeting"
+    assert sent[1]["text"] == "*Настя*\ntext"
+    assert sent[1]["reply_markup"] == "keyboard"
+
+
+def test_send_daily_notifications_handles_empty_assignments(monkeypatch):
+    _stub_parse_mode(monkeypatch)
+
+    app_ctx = SimpleNamespace(
+        users=[],
+        config=SimpleNamespace(bot=SimpleNamespace(group_chat_id=-100)),
+        db=SimpleNamespace(),
+    )
+
+    monkeypatch.setattr(
+        dispatcher,
+        "ensure_assignments_for_date",
+        lambda ctx, target: {},
+    )
+    monkeypatch.setattr(dispatcher, "build_group_blocks", lambda ctx, data, day: [])
+    monkeypatch.setattr(dispatcher, "build_morning_greeting", lambda day: "greeting")
+
+    sent = []
+
+    async def fake_send_message(**kwargs):
+        sent.append(kwargs)
+
+    app = SimpleNamespace(
+        bot_data={"app_context": app_ctx},
+        bot=SimpleNamespace(send_message=fake_send_message),
+    )
+
+    asyncio.run(dispatcher.send_daily_notifications(app))
+
+    assert sent[0]["text"] == "greeting"
+    assert sent[1]["text"] == "Сегодня задач нет."
+
+
+def test_send_daily_report_uses_formatter(monkeypatch):
+    _stub_parse_mode(monkeypatch)
+
+    rows = [("ignored",)]
+    app_ctx = SimpleNamespace(
+        db=SimpleNamespace(daily_stats=lambda start, end: rows),
+        config=SimpleNamespace(bot=SimpleNamespace(group_chat_id=-100)),
+    )
+
+    monkeypatch.setattr(dispatcher, "format_daily_report", lambda day, rows: "report")
+
+    sent = []
+
+    async def fake_send_message(**kwargs):
+        sent.append(kwargs)
+
+    app = SimpleNamespace(
+        bot_data={"app_context": app_ctx},
+        bot=SimpleNamespace(send_message=fake_send_message),
+    )
+
+    asyncio.run(dispatcher.send_daily_report(app))
+
+    assert sent[0]["text"] == "report"
 
 
 def test_stats_command_uses_daily_stats(monkeypatch):

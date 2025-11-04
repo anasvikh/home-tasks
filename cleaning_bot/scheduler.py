@@ -7,7 +7,11 @@ import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from .config import SchedulerConfig
-from .dispatcher import send_daily_notifications, send_evening_reminders
+from .dispatcher import (
+    send_daily_notifications,
+    send_daily_report,
+    send_evening_reminders,
+)
 
 
 class BotScheduler:
@@ -19,6 +23,7 @@ class BotScheduler:
     def start(self, app) -> None:
         daily_time = _parse_time(self._cfg.daily_notification_time)
         reminder_time = _parse_time(self._cfg.reminder_time)
+        report_time = _parse_time(self._cfg.report_time)
         self._scheduler.add_job(
             send_daily_notifications,
             trigger="cron",
@@ -35,6 +40,15 @@ class BotScheduler:
             minute=reminder_time.minute,
             args=[app],
             id="evening_reminder",
+            replace_existing=True,
+        )
+        self._scheduler.add_job(
+            send_daily_report,
+            trigger="cron",
+            hour=report_time.hour,
+            minute=report_time.minute,
+            args=[app],
+            id="daily_report",
             replace_existing=True,
         )
         self._scheduler.start()

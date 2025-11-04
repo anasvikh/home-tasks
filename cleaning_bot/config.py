@@ -20,6 +20,7 @@ class SchedulerConfig:
     timezone: str
     daily_notification_time: str
     reminder_time: str
+    report_time: str
     rotation_start: date
     extended_interval_weeks: int
     general_interval_weeks: int
@@ -80,7 +81,8 @@ def load_config(path: Path | str) -> AppConfig:
     scheduler = SchedulerConfig(
         timezone=scheduler_cfg.get("timezone", "UTC"),
         daily_notification_time=scheduler_cfg.get("daily_notification_time", "10:00"),
-        reminder_time=scheduler_cfg.get("reminder_time", "20:00"),
+        reminder_time=scheduler_cfg.get("reminder_time", "18:00"),
+        report_time=scheduler_cfg.get("report_time", "22:00"),
         rotation_start=_parse_date(scheduler_cfg.get("rotation_start", "2024-01-01")),
         extended_interval_weeks=int(scheduler_cfg.get("extended_interval_weeks", 5)),
         general_interval_weeks=int(scheduler_cfg.get("general_interval_weeks", 26)),
