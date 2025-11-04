@@ -36,11 +36,37 @@ def register_handlers(app: "Application", ctx: AppContext) -> None:
             welcome,
         )
     )
+    app.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS & filters.TEXT & filters.Entity("mention"),
+            welcome_on_group_mention,
+        )
+    )
     app.add_handler(CallbackQueryHandler(on_task_completed, pattern=r"^task_done:"))
 
 
 async def start(update, context) -> None:
     await welcome(update, context)
+
+
+async def welcome_on_group_mention(update, context) -> None:
+    message = update.effective_message
+    if not message or not message.text:
+        return
+
+    bot_username = context.bot.username
+    if not bot_username:
+        return
+
+    bot_mention = f"@{bot_username.lower()}"
+
+    for entity in message.entities or []:
+        if entity.type != "mention":
+            continue
+        mention = message.text[entity.offset : entity.offset + entity.length].lower()
+        if mention == bot_mention:
+            await welcome(update, context)
+            break
 
 
 async def welcome(update, context) -> None:
