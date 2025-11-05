@@ -21,29 +21,26 @@
    sudo usermod -aG docker $USER
    newgrp docker
    ```
-3. Создайте каталог для приложения, например `/opt/home-tasks`.
+3. Создайте каталог для приложения, например `/opt/home-tasks`. В нём будут храниться файлы конфигурации (`.env`),
+   каталоги с данными (`storage/`) и резервными копиями (`backups/`). Сам образ приложения мы будем получать из GHCR,
+   поэтому код проекта на сервере держать не требуется.
 
-## 2. Подготовка репозитория
+## 2. Подготовка конфигурации
 
-1. Склонируйте проект на сервер:
-   ```bash
-   git clone https://github.com/<ВАШ_АККАУНТ>/home-tasks.git /opt/home-tasks
-   cd /opt/home-tasks
-   ```
-2. Скопируйте пример `.env` и заполните переменные (токен бота, строка подключения к базе и т. п.):
-   ```bash
-   cp cleaning_bot/.env.example .env
-   ```
-3. Отредактируйте `cleaning_bot/config.yaml`:
-   - Укажите боевые `group_chat_id` и `admin_ids`.
-   - Задайте путь к базе: `database.path: /data/db.sqlite3` (контейнер будет монтировать эту директорию).
-4. Проверьте файлы `cleaning_bot/users.json` и `cleaning_bot/tasks.json`.
-5. Подготовьте каталоги для данных и бэкапов:
-   ```bash
-   mkdir -p storage backups
-   ```
+> В отличие от systemd‑развёртывания нам не нужно держать исходники на сервере: GitHub Actions будет загружать только
+> необходимые файлы (`deploy/docker-compose.yml`, скрипты и пр.) перед запуском. На сервере должны лежать лишь
+> пользовательские данные и секреты.
 
-> **Совет:** изменения конфигурации лучше хранить в отдельных ветках/коммитах, чтобы их легко переносить между окружениями.
+1. Создайте файл `/opt/home-tasks/.env` и заполните переменные окружения. Ориентируйтесь на
+   [`cleaning_bot/.env.example`](../../cleaning_bot/.env.example) — необходимые переменные те же (токен бота, строка
+   подключения к базе и т. п.).
+2. Обновите конфигурацию `cleaning_bot/config.yaml` и связанные JSON‑файлы в репозитории, чтобы в контейнер попадали
+   нужные значения (боевые `group_chat_id`, `admin_ids`, список пользователей и задач). Эти изменения стоит хранить в
+   git, чтобы ими управляла CI/CD. После коммита GitHub Actions доставит новые версии файлов на сервер.
+3. На сервере создайте каталоги для данных и бэкапов (они будут смонтированы в контейнер):
+   ```bash
+   mkdir -p /opt/home-tasks/storage /opt/home-tasks/backups
+   ```
 
 ## 3. Локальная проверка в Docker
 
@@ -77,19 +74,31 @@
 Workflow `.github/workflows/deploy.yml` выполняет три шага:
 1. Собирает образ `ghcr.io/<OWNER>/home-tasks:<commit_sha>`.
 2. При пуше в `main` дополнительно помечает образ тегом `latest`.
-3. Через SSH вызывает `docker compose pull` и `docker compose up -d` на сервере, пробрасывая переменную `IMAGE` с новым тегом.
+3. Копирует актуальные файлы из каталога `deploy/` на сервер, после чего через SSH вызывает `docker compose pull` и
+   `docker compose up -d`, пробрасывая переменную `IMAGE` с новым тегом.
 
 ## 5. Первое развёртывание на сервере
 
-1. Создайте файл `.env` (если не сделали раньше) и убедитесь, что в нём есть `TELEGRAM_BOT_TOKEN`.
-2. Запустите контейнер:
+GitHub Actions выкладывает compose‑файл и скрипты в каталог `${DEPLOY_PATH}` на сервере. После первой успешной сборки в
+`main` на сервере появятся:
+
+- `deploy/docker-compose.yml` — описание контейнера.
+- `deploy/scripts/backup_sqlite.sh` — скрипт резервного копирования.
+
+Чтобы запустить сервис впервые:
+
+1. Убедитесь, что `.env`, `storage/` и `backups/` созданы (см. шаг 2).
+2. Выполните деплой вручную (или дождитесь его из GitHub Actions):
    ```bash
-   IMAGE=ghcr.io/<OWNER>/home-tasks:latest docker compose -f deploy/docker-compose.yml up -d
+   IMAGE=ghcr.io/<OWNER>/home-tasks:latest docker compose \
+     -f deploy/docker-compose.yml \
+     --env-file .env \
+     up -d
    ```
 3. Убедитесь, что в `storage/db.sqlite3` появились таблицы, а бот отвечает в Telegram.
 4. Для просмотра логов используйте:
    ```bash
-   docker compose -f deploy/docker-compose.yml logs -f
+   docker compose -f deploy/docker-compose.yml --env-file .env logs -f
    ```
 
 ## 6. Резервное копирование базы данных
