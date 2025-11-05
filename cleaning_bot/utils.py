@@ -110,14 +110,19 @@ def progress_emoji(completed: int, total: int) -> str:
         return "-"
     if completed == 0:
         return "😡"
+
     ratio = completed / total
-    if ratio < 0.5:
-        return "😞"
-    if ratio == 0.5:
-        return "😐"
-    if completed == total:
+    if ratio >= 1:
         return "✅"
-    return "🙂"
+    if ratio >= 0.8:
+        return "😄"
+    if ratio >= 0.6:
+        return "🙂"
+    if ratio >= 0.4:
+        return "😐"
+    if ratio >= 0.2:
+        return "😕"
+    return "😢"
 
 
 def _highest_level_for_assignments(assignments: Sequence[Assignment]) -> str | None:

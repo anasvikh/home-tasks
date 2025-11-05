@@ -79,7 +79,7 @@ def test_format_stats_renders_weekly_and_monthly_views():
     assert "✅" in weekly
 
     assert "📊 Статистика за месяц" in monthly
-    assert "Всего — 2/8 (25%) 😞" in monthly
+    assert "Всего — 2/8 (25%) 😕" in monthly
 
 
 def test_format_stats_handles_empty_rows():
