@@ -1,32 +1,47 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -lt 3 ]]; then
-  echo "Usage: $0 <db_path> <backup_dir> <retention>" >&2
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
+COMPOSE_FILE="${COMPOSE_FILE:-${PROJECT_ROOT}/deploy/docker-compose.yml}"
+ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env}"
+SERVICE_NAME="${SERVICE_NAME:-cleaning-bot}"
+RETENTION_DAYS="${RETENTION_DAYS:-14}"
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "docker is required" >&2
   exit 1
 fi
 
-DB_PATH=$1
-BACKUP_DIR=$2
-RETENTION=$3
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-BASENAME=$(basename "${DB_PATH}")
-TARGET="${BACKUP_DIR}/${BASENAME%.*}-${TIMESTAMP}.sqlite3.gz"
-
+BACKUP_DIR="${PROJECT_ROOT}/backups"
 mkdir -p "${BACKUP_DIR}"
 
-RAW_COPY=$(mktemp "${BACKUP_DIR}/db.XXXXXX.sqlite3")
-trap 'rm -f "${RAW_COPY}"' EXIT
+# Create a consistent SQLite backup inside the container and copy it to the shared volume.
+backup_path=$(docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" \
+  exec -T "${SERVICE_NAME}" python - <<'PY'
+import datetime
+import pathlib
+import sqlite3
 
-sqlite3 "${DB_PATH}" ".backup '${RAW_COPY}'"
-gzip -c "${RAW_COPY}" > "${TARGET}"
-rm -f "${RAW_COPY}"
-trap - EXIT
+DATABASE = pathlib.Path("/data/db.sqlite3")
+BACKUP_DIR = pathlib.Path("/backups")
+BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-if [[ ${RETENTION} -gt 0 && -d "${BACKUP_DIR}" ]]; then
-  if compgen -G "${BACKUP_DIR}"/*.sqlite3.gz > /dev/null; then
-    ls -1t "${BACKUP_DIR}"/*.sqlite3.gz | tail -n +$((RETENTION + 1)) | xargs -r rm -f
-  fi
+if not DATABASE.exists():
+    raise SystemExit(f"Database not found at {DATABASE}")
+
+stamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+destination = BACKUP_DIR / f"assignments-{stamp}.db"
+with sqlite3.connect(f"file:{DATABASE}?mode=ro", uri=True) as source, sqlite3.connect(destination) as target:
+    source.backup(target)
+
+print(destination)
+PY
+)
+backup_path="${backup_path##*$'\n'}"
+echo "Backup created at ${BACKUP_DIR}/$(basename "${backup_path}")"
+
+# Remove old backups beyond retention window
+if [[ -n "${RETENTION_DAYS}" ]]; then
+  find "${BACKUP_DIR}" -type f -name 'assignments-*.db' -mtime +"${RETENTION_DAYS}" -delete
 fi
-
-echo "Backup stored at ${TARGET}"

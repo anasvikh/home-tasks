@@ -58,9 +58,9 @@ pip install -r requirements.txt
 python -m cleaning_bot.bot
 ```
 
-Бот запустится в режиме long polling. Для продакшена рекомендуется настроить systemd‑сервис или Docker‑контейнер на виртуальной машине.
+Бот запустится в режиме long polling. Для продакшена рекомендуется использовать Docker‑контейнер на виртуальной машине.
 
-Подробная инструкция по развёртыванию на одной VM через `systemd` и `python -m venv` находится в [docs/deployment/systemd.md](docs/deployment/systemd.md).
+Подробная инструкция по развёртыванию через Docker, GitHub Actions и docker compose находится в [docs/deployment/docker.md](docs/deployment/docker.md).
 
 ## Структура проекта
 
