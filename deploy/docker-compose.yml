@@ -1,0 +1,16 @@
+services:
+  cleaning-bot:
+    image: ${IMAGE:-home-tasks:latest}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      TZ: ${TZ:-Europe/Moscow}
+    volumes:
+      - ../storage:/data
+      - ../backups:/backups
+    working_dir: /app
+    command: ["python", "-m", "cleaning_bot.bot"]
