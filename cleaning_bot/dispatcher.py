@@ -61,11 +61,31 @@ def register_handlers(app: "Application", ctx: AppContext) -> None:
             welcome_on_group_mention,
         )
     )
+    app.add_handler(CallbackQueryHandler(handle_quick_action, pattern=r"^quick_action:"))
     app.add_handler(CallbackQueryHandler(on_task_completed, pattern=r"^task_done:"))
 
 
 async def start(update, context) -> None:
     await welcome(update, context)
+
+
+def build_command_hint_keyboard():
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    buttons = [
+        [
+            InlineKeyboardButton(
+                text="📋 Список задач", callback_data="quick_action:tasks"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📊 Статистика", callback_data="quick_action:stats"
+            )
+        ],
+    ]
+
+    return InlineKeyboardMarkup(buttons)
 
 
 async def welcome_on_group_mention(update, context) -> None:
@@ -95,12 +115,14 @@ async def welcome(update, context) -> None:
         " выполнения, а вечером напомню о невыполненных делах."
     )
     hints = [
+        "• Быстрые команды доступны на кнопках ниже.",
         "• Используй кнопку ✅ в сообщениях, чтобы отмечать завершённые задания.",
         "• Команда /tasks вернёт актуальный список дел в любой момент.",
         "• Команда /stats покажет прогресс за неделю и месяц.",
     ]
     text = intro + "\n" + "\n".join(hints)
-    await update.effective_message.reply_text(text)
+    keyboard = build_command_hint_keyboard()
+    await update.effective_message.reply_text(text, reply_markup=keyboard)
 
 
 async def chat_id(update, context) -> None:
@@ -128,65 +150,99 @@ async def chat_id(update, context) -> None:
 
 
 async def tasks_command(update, context) -> None:
+    await _send_tasks(context, update.effective_chat, update.effective_user, update.effective_message)
+
+
+async def stats_command(update, context) -> None:
+    await _send_stats(context, update.effective_message)
+
+
+async def handle_quick_action(update, context) -> None:
+    query = update.callback_query
+    if not query or not query.data:
+        return
+
+    message = query.message
+    if not message:
+        await query.answer()
+        return
+
+    action = query.data.split(":", 1)[1]
+    if action == "tasks":
+        await query.answer("Отправляю список задач…")
+        chat = message.chat
+        await _send_tasks(context, chat, query.from_user, message)
+    elif action == "stats":
+        await query.answer("Готовлю статистику…")
+        await _send_stats(context, message)
+    else:
+        await query.answer()
+
+
+async def _send_tasks(context, chat, user, message):
     from telegram.constants import ParseMode
 
     app_ctx = context.application.bot_data["app_context"]
     today = datetime.now().date()
     assignments_by_user = ensure_assignments_for_date(app_ctx, today)
 
-    chat = update.effective_chat
-    message = update.effective_message
+    async def respond(text, **kwargs):
+        if message:
+            return await message.reply_text(text, **kwargs)
+        if chat:
+            return await context.bot.send_message(chat_id=chat.id, text=text, **kwargs)
+        return None
+
     if chat and chat.type == "private":
-        user = update.effective_user
         user_id = user.id if user else None
         assignments = (
             assignments_by_user.get(user_id, []) if user_id is not None else []
         )
 
         if not assignments:
-            await message.reply_text(
-                "На сегодня для тебя нет назначенных задач.",
-            )
+            await respond("На сегодня для тебя нет назначенных задач.")
             return
 
         text = build_personal_message(assignments, today)
         keyboard = build_keyboard(assignments)
-        sent_message = await message.reply_text(
+        sent_message = await respond(
             text,
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=keyboard,
         )
-        _store_personal_task_message(
-            context.application,
-            today,
-            user_id,
-            sent_message,
-        )
+        if sent_message:
+            _store_personal_task_message(
+                context.application,
+                today,
+                user_id,
+                sent_message,
+            )
         return
 
     sent_any = False
     for block in build_group_blocks(app_ctx, assignments_by_user, today):
-        sent_message = await message.reply_text(
+        sent_message = await respond(
             block.text,
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=block.keyboard,
         )
-        _store_group_task_message(
-            context.application,
-            today,
-            block.user_id,
-            sent_message,
-        )
+        if sent_message:
+            _store_group_task_message(
+                context.application,
+                today,
+                block.user_id,
+                sent_message,
+            )
         sent_any = True
 
     if not sent_any:
-        await message.reply_text(
+        await respond(
             "Сегодня задач нет.",
             parse_mode=ParseMode.MARKDOWN,
         )
 
 
-async def stats_command(update, context) -> None:
+async def _send_stats(context, message, chat=None):
     from telegram.constants import ParseMode
 
     app_ctx = context.application.bot_data["app_context"]
@@ -207,7 +263,16 @@ async def stats_command(update, context) -> None:
     if not text:
         text = "Пока нет данных для отображения статистики."
 
-    await update.effective_message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    target_chat = chat or (getattr(message, "chat", None) if message else None)
+
+    if message:
+        await message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    elif target_chat:
+        await context.bot.send_message(
+            chat_id=target_chat.id,
+            text=text,
+            parse_mode=ParseMode.MARKDOWN,
+        )
 
 
 async def on_task_completed(update, context) -> None:
