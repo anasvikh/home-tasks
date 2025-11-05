@@ -47,11 +47,11 @@ def _format_task_line(assignment: Assignment) -> str:
 
 
 def format_levels_line(assignments: Iterable[Assignment]) -> str:
-    levels = _levels_for_assignments(assignments)
-    if not levels:
+    assignments_list = list(assignments)
+    highest_level = _highest_level_for_assignments(assignments_list)
+    if not highest_level:
         return ""
-    joined = ", ".join(levels)
-    return f"Сегодня по плану {joined}"
+    return f"Сегодня по плану {highest_level}"
 
 
 def format_user_summary(assignments: Iterable[Assignment]) -> str:
@@ -120,13 +120,18 @@ def progress_emoji(completed: int, total: int) -> str:
     return "🙂"
 
 
-def _levels_for_assignments(assignments: Iterable[Assignment]) -> List[str]:
-    assignments_list = list(assignments)
-    available = {assignment.level for assignment in assignments_list}
+def _highest_level_for_assignments(assignments: Sequence[Assignment]) -> str | None:
+    if not assignments:
+        return None
+
+    available = {assignment.level for assignment in assignments}
     if not available:
-        return []
-    max_index = max(LEVEL_ORDER.index(level) for level in available)
-    return list(LEVEL_ORDER[: max_index + 1])
+        return None
+
+    try:
+        return max(available, key=LEVEL_ORDER.index)
+    except ValueError as exc:  # pragma: no cover - guard clause
+        raise ValueError("Unknown level in assignments") from exc
 
 
 def format_daily_report(
