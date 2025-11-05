@@ -1,0 +1,20 @@
+[Unit]
+Description=Cleaning Bot Telegram dispatcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cleaningbot
+Group=cleaningbot
+WorkingDirectory=/opt/cleaning-bot/app
+EnvironmentFile=/etc/cleaning-bot/bot.env
+Environment=PYTHONPATH=/opt/cleaning-bot/app
+ExecStart=/opt/cleaning-bot/app/.venv/bin/python -m cleaning_bot.bot
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
