@@ -4,6 +4,12 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Tuple, TYPE_CHECKING
 
+from telegram import (
+    BotCommand,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
+)
+
 from .config import AppConfig
 from .data_loaders import TaskMap, User
 from .database import Assignment, Database
@@ -67,6 +73,18 @@ def register_handlers(app: "Application", ctx: AppContext) -> None:
 
 async def start(update, context) -> None:
     await welcome(update, context)
+
+
+async def setup_bot_commands(app: "Application") -> None:
+    commands = [
+        BotCommand("start", "Показать приветствие"),
+        BotCommand("tasks", "Показать мои задачи"),
+        BotCommand("stats", "Показать статистику"),
+    ]
+
+    await app.bot.set_my_commands(commands)
+    await app.bot.set_my_commands(commands, scope=BotCommandScopeAllPrivateChats())
+    await app.bot.set_my_commands(commands, scope=BotCommandScopeAllGroupChats())
 
 
 def build_command_hint_keyboard():
@@ -169,11 +187,11 @@ async def handle_quick_action(update, context) -> None:
 
     action = query.data.split(":", 1)[1]
     if action == "tasks":
-        await query.answer("Отправляю список задач…")
+        await query.answer()
         chat = message.chat
         await _send_tasks(context, chat, query.from_user, message)
     elif action == "stats":
-        await query.answer("Готовлю статистику…")
+        await query.answer()
         await _send_stats(context, message)
     else:
         await query.answer()
