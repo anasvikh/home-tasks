@@ -63,7 +63,9 @@ def load_config(path: Path | str) -> AppConfig:
         raise RuntimeError(
             "PyYAML is required to load configuration. Install package 'PyYAML'."
         ) from exc
-    with open(path, "r", encoding="utf-8") as fh:
+    config_path = Path(path).resolve()
+
+    with open(config_path, "r", encoding="utf-8") as fh:
         raw = yaml.safe_load(fh) or {}
 
     bot_cfg = raw.get("bot", {})
@@ -89,7 +91,11 @@ def load_config(path: Path | str) -> AppConfig:
     )
 
     db_cfg = raw.get("database", {})
-    database = DatabaseConfig(path=Path(db_cfg.get("path", "db.sqlite3")))
+    db_path_raw = os.environ.get("DATABASE_PATH") or db_cfg.get("path", "db.sqlite3")
+    db_path = Path(db_path_raw).expanduser()
+    if not db_path.is_absolute():
+        db_path = (config_path.parent / db_path).resolve()
+    database = DatabaseConfig(path=db_path)
 
     files_cfg = raw.get("files", {})
     files = FilesConfig(

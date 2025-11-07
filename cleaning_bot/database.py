@@ -25,6 +25,7 @@ class Assignment:
 class Database:
     def __init__(self, path: Path):
         self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()
 
     @contextmanager
