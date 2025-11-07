@@ -4,6 +4,12 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Tuple, TYPE_CHECKING
 
+from telegram import (
+    BotCommand,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
+)
+
 from .config import AppConfig
 from .data_loaders import TaskMap, User
 from .database import Assignment, Database
@@ -61,11 +67,43 @@ def register_handlers(app: "Application", ctx: AppContext) -> None:
             welcome_on_group_mention,
         )
     )
+    app.add_handler(CallbackQueryHandler(handle_quick_action, pattern=r"^quick_action:"))
     app.add_handler(CallbackQueryHandler(on_task_completed, pattern=r"^task_done:"))
 
 
 async def start(update, context) -> None:
     await welcome(update, context)
+
+
+async def setup_bot_commands(app: "Application") -> None:
+    commands = [
+        BotCommand("start", "Показать приветствие"),
+        BotCommand("tasks", "Показать мои задачи"),
+        BotCommand("stats", "Показать статистику"),
+    ]
+
+    await app.bot.set_my_commands(commands)
+    await app.bot.set_my_commands(commands, scope=BotCommandScopeAllPrivateChats())
+    await app.bot.set_my_commands(commands, scope=BotCommandScopeAllGroupChats())
+
+
+def build_command_hint_keyboard():
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    buttons = [
+        [
+            InlineKeyboardButton(
+                text="📋 Список задач", callback_data="quick_action:tasks"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📊 Статистика", callback_data="quick_action:stats"
+            )
+        ],
+    ]
+
+    return InlineKeyboardMarkup(buttons)
 
 
 async def welcome_on_group_mention(update, context) -> None:
@@ -95,12 +133,14 @@ async def welcome(update, context) -> None:
         " выполнения, а вечером напомню о невыполненных делах."
     )
     hints = [
+        "• Быстрые команды доступны на кнопках ниже.",
         "• Используй кнопку ✅ в сообщениях, чтобы отмечать завершённые задания.",
         "• Команда /tasks вернёт актуальный список дел в любой момент.",
         "• Команда /stats покажет прогресс за неделю и месяц.",
     ]
     text = intro + "\n" + "\n".join(hints)
-    await update.effective_message.reply_text(text)
+    keyboard = build_command_hint_keyboard()
+    await update.effective_message.reply_text(text, reply_markup=keyboard)
 
 
 async def chat_id(update, context) -> None:
@@ -128,65 +168,99 @@ async def chat_id(update, context) -> None:
 
 
 async def tasks_command(update, context) -> None:
+    await _send_tasks(context, update.effective_chat, update.effective_user, update.effective_message)
+
+
+async def stats_command(update, context) -> None:
+    await _send_stats(context, update.effective_message)
+
+
+async def handle_quick_action(update, context) -> None:
+    query = update.callback_query
+    if not query or not query.data:
+        return
+
+    message = query.message
+    if not message:
+        await query.answer()
+        return
+
+    action = query.data.split(":", 1)[1]
+    if action == "tasks":
+        await query.answer()
+        chat = message.chat
+        await _send_tasks(context, chat, query.from_user, message)
+    elif action == "stats":
+        await query.answer()
+        await _send_stats(context, message)
+    else:
+        await query.answer()
+
+
+async def _send_tasks(context, chat, user, message):
     from telegram.constants import ParseMode
 
     app_ctx = context.application.bot_data["app_context"]
     today = datetime.now().date()
     assignments_by_user = ensure_assignments_for_date(app_ctx, today)
 
-    chat = update.effective_chat
-    message = update.effective_message
+    async def respond(text, **kwargs):
+        if message:
+            return await message.reply_text(text, **kwargs)
+        if chat:
+            return await context.bot.send_message(chat_id=chat.id, text=text, **kwargs)
+        return None
+
     if chat and chat.type == "private":
-        user = update.effective_user
         user_id = user.id if user else None
         assignments = (
             assignments_by_user.get(user_id, []) if user_id is not None else []
         )
 
         if not assignments:
-            await message.reply_text(
-                "На сегодня для тебя нет назначенных задач.",
-            )
+            await respond("На сегодня для тебя нет назначенных задач.")
             return
 
         text = build_personal_message(assignments, today)
         keyboard = build_keyboard(assignments)
-        sent_message = await message.reply_text(
+        sent_message = await respond(
             text,
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=keyboard,
         )
-        _store_personal_task_message(
-            context.application,
-            today,
-            user_id,
-            sent_message,
-        )
+        if sent_message:
+            _store_personal_task_message(
+                context.application,
+                today,
+                user_id,
+                sent_message,
+            )
         return
 
     sent_any = False
     for block in build_group_blocks(app_ctx, assignments_by_user, today):
-        sent_message = await message.reply_text(
+        sent_message = await respond(
             block.text,
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=block.keyboard,
         )
-        _store_group_task_message(
-            context.application,
-            today,
-            block.user_id,
-            sent_message,
-        )
+        if sent_message:
+            _store_group_task_message(
+                context.application,
+                today,
+                block.user_id,
+                sent_message,
+            )
         sent_any = True
 
     if not sent_any:
-        await message.reply_text(
+        await respond(
             "Сегодня задач нет.",
             parse_mode=ParseMode.MARKDOWN,
         )
 
 
-async def stats_command(update, context) -> None:
+async def _send_stats(context, message, chat=None):
     from telegram.constants import ParseMode
 
     app_ctx = context.application.bot_data["app_context"]
@@ -207,7 +281,16 @@ async def stats_command(update, context) -> None:
     if not text:
         text = "Пока нет данных для отображения статистики."
 
-    await update.effective_message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    target_chat = chat or (getattr(message, "chat", None) if message else None)
+
+    if message:
+        await message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    elif target_chat:
+        await context.bot.send_message(
+            chat_id=target_chat.id,
+            text=text,
+            parse_mode=ParseMode.MARKDOWN,
+        )
 
 
 async def on_task_completed(update, context) -> None:
@@ -253,8 +336,15 @@ async def on_task_completed(update, context) -> None:
         keyboard = build_keyboard(remaining)
     else:
         assignments = app_ctx.db.list_assignments_for_user(task_date, assignment.user_id)
-        new_text = build_personal_message(assignments, task_date)
+        include_completed = True
         if message.chat and message.chat.type in {"group", "supergroup"}:
+            include_completed = False
+        new_text = build_personal_message(
+            assignments,
+            task_date,
+            include_completed=include_completed,
+        )
+        if not include_completed:
             owner_name = next(
                 (u.name for u in app_ctx.users if u.telegram_id == assignment.user_id),
                 "",
@@ -390,7 +480,11 @@ def build_group_blocks(
         assignments = assignments_by_user.get(user.telegram_id, [])
         if not assignments:
             continue
-        text = build_personal_message(assignments, task_date)
+        text = build_personal_message(
+            assignments,
+            task_date,
+            include_completed=False,
+        )
         keyboard = build_keyboard(assignments)
         blocks.append(
             GroupBlock(
@@ -402,13 +496,23 @@ def build_group_blocks(
     return blocks
 
 
-def build_personal_message(assignments: List[Assignment], task_date: date) -> str:
+def build_personal_message(
+    assignments: List[Assignment],
+    task_date: date,
+    *,
+    include_completed: bool = True,
+) -> str:
     header = f"🧽 Задачи на {task_date.strftime('%d.%m.%Y')}"
-    levels_line = format_levels_line(assignments)
+    if include_completed:
+        visible_assignments = assignments
+    else:
+        visible_assignments = [a for a in assignments if not a.completed]
+
+    levels_line = format_levels_line(visible_assignments)
     parts = [header]
     if levels_line:
         parts.append(levels_line)
-    parts.append(format_assignments(assignments))
+    parts.append(format_assignments(visible_assignments))
     return "\n".join(parts)
 
 
@@ -459,7 +563,11 @@ async def _refresh_group_task_message(context, assignment: Assignment) -> None:
         assignment.task_date,
         assignment.user_id,
     )
-    text = build_personal_message(assignments, assignment.task_date)
+    text = build_personal_message(
+        assignments,
+        assignment.task_date,
+        include_completed=False,
+    )
     owner_name = next(
         (u.name for u in app_ctx.users if u.telegram_id == assignment.user_id),
         "",

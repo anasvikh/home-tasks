@@ -8,7 +8,7 @@ from telegram.ext import Application
 from .config import load_config
 from .data_loaders import load_tasks, load_users
 from .database import Database
-from .dispatcher import AppContext, register_handlers
+from .dispatcher import AppContext, register_handlers, setup_bot_commands
 from .rotation import (
     LEVEL_DAILY,
     LEVEL_EXTENDED,
@@ -42,6 +42,7 @@ def build_application(config_path: Path | str = DEFAULT_CONFIG_PATH) -> Applicat
     scheduler = BotScheduler(cfg.scheduler)
 
     async def on_start(app: Application) -> None:
+        await setup_bot_commands(app)
         scheduler.start(app)
 
     async def on_shutdown(app: Application) -> None:  # pragma: no cover - cleanup
