@@ -79,7 +79,9 @@ def test_tasks_command_private_sends_personal_summary(monkeypatch):
         return {42: ["assignment"]}
 
     monkeypatch.setattr(dispatcher, "ensure_assignments_for_date", fake_ensure)
-    monkeypatch.setattr(dispatcher, "build_personal_message", lambda a, d: "personal")
+    monkeypatch.setattr(
+        dispatcher, "build_personal_message", lambda a, d, **kwargs: "personal"
+    )
     monkeypatch.setattr(dispatcher, "build_keyboard", lambda a: "keyboard")
     monkeypatch.setattr(
         dispatcher,
@@ -168,6 +170,66 @@ def test_tasks_command_group_handles_empty(monkeypatch):
     asyncio.run(dispatcher.tasks_command(update, context))
 
     assert calls == [("Сегодня задач нет.", {"parse_mode": "Markdown"})]
+
+
+def test_build_personal_message_hides_completed_for_groups():
+    task_date = date(2024, 1, 1)
+    assignments = [
+        Assignment(
+            id=1,
+            task_date=task_date,
+            user_id=1,
+            room="Кухня",
+            level="базовый минимум",
+            description="Помыть пол",
+            completed=False,
+            completed_at=None,
+        ),
+        Assignment(
+            id=2,
+            task_date=task_date,
+            user_id=1,
+            room="Кухня",
+            level="легкая уборка",
+            description="Протереть стол",
+            completed=True,
+            completed_at=None,
+        ),
+    ]
+
+    text = dispatcher.build_personal_message(
+        assignments,
+        task_date,
+        include_completed=False,
+    )
+
+    assert "Помыть пол" in text
+    assert "Протереть стол" not in text
+
+
+def test_build_personal_message_reports_no_tasks_when_all_done():
+    task_date = date(2024, 1, 1)
+    assignments = [
+        Assignment(
+            id=1,
+            task_date=task_date,
+            user_id=1,
+            room="Кухня",
+            level="базовый минимум",
+            description="Помыть пол",
+            completed=True,
+            completed_at=None,
+        )
+    ]
+
+    text = dispatcher.build_personal_message(
+        assignments,
+        task_date,
+        include_completed=False,
+    )
+
+    assert "Нет задач 🎉" in text
+    assert "Помыть пол" not in text
 
 
 def test_send_daily_notifications_posts_greeting_and_blocks(monkeypatch):
@@ -392,7 +454,9 @@ def test_on_task_completed_updates_group_message(monkeypatch):
             assert user_id == 1
             return [assignment]
 
-    monkeypatch.setattr(dispatcher, "build_personal_message", lambda a, d: "updated")
+    monkeypatch.setattr(
+        dispatcher, "build_personal_message", lambda a, d, **kwargs: "updated"
+    )
     monkeypatch.setattr(dispatcher, "build_keyboard", lambda a: "keyboard")
 
     edited = {}

@@ -336,8 +336,15 @@ async def on_task_completed(update, context) -> None:
         keyboard = build_keyboard(remaining)
     else:
         assignments = app_ctx.db.list_assignments_for_user(task_date, assignment.user_id)
-        new_text = build_personal_message(assignments, task_date)
+        include_completed = True
         if message.chat and message.chat.type in {"group", "supergroup"}:
+            include_completed = False
+        new_text = build_personal_message(
+            assignments,
+            task_date,
+            include_completed=include_completed,
+        )
+        if not include_completed:
             owner_name = next(
                 (u.name for u in app_ctx.users if u.telegram_id == assignment.user_id),
                 "",
@@ -473,7 +480,11 @@ def build_group_blocks(
         assignments = assignments_by_user.get(user.telegram_id, [])
         if not assignments:
             continue
-        text = build_personal_message(assignments, task_date)
+        text = build_personal_message(
+            assignments,
+            task_date,
+            include_completed=False,
+        )
         keyboard = build_keyboard(assignments)
         blocks.append(
             GroupBlock(
@@ -485,13 +496,23 @@ def build_group_blocks(
     return blocks
 
 
-def build_personal_message(assignments: List[Assignment], task_date: date) -> str:
+def build_personal_message(
+    assignments: List[Assignment],
+    task_date: date,
+    *,
+    include_completed: bool = True,
+) -> str:
     header = f"🧽 Задачи на {task_date.strftime('%d.%m.%Y')}"
-    levels_line = format_levels_line(assignments)
+    if include_completed:
+        visible_assignments = assignments
+    else:
+        visible_assignments = [a for a in assignments if not a.completed]
+
+    levels_line = format_levels_line(visible_assignments)
     parts = [header]
     if levels_line:
         parts.append(levels_line)
-    parts.append(format_assignments(assignments))
+    parts.append(format_assignments(visible_assignments))
     return "\n".join(parts)
 
 
@@ -542,7 +563,11 @@ async def _refresh_group_task_message(context, assignment: Assignment) -> None:
         assignment.task_date,
         assignment.user_id,
     )
-    text = build_personal_message(assignments, assignment.task_date)
+    text = build_personal_message(
+        assignments,
+        assignment.task_date,
+        include_completed=False,
+    )
     owner_name = next(
         (u.name for u in app_ctx.users if u.telegram_id == assignment.user_id),
         "",
