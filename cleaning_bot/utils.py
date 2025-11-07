@@ -115,7 +115,7 @@ def progress_emoji(completed: int, total: int) -> str:
     if ratio >= 1:
         return "✅"
     if ratio >= 0.8:
-        return "😄"
+        return "😀"
     if ratio >= 0.6:
         return "🙂"
     if ratio >= 0.4:
