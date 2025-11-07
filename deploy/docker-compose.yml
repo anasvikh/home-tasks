@@ -9,6 +9,7 @@ services:
       - ../.env
     environment:
       TZ: ${TZ:-Europe/Moscow}
+      DATABASE_PATH: ${DATABASE_PATH:-/data/db.sqlite3}
     volumes:
       - ../storage:/data
       - ../backups:/backups

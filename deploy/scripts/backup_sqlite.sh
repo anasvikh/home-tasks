@@ -22,8 +22,9 @@ backup_path=$(docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" \
 import datetime
 import pathlib
 import sqlite3
+import os
 
-DATABASE = pathlib.Path("/data/db.sqlite3")
+DATABASE = pathlib.Path(os.environ.get("DATABASE_PATH", "/data/db.sqlite3"))
 BACKUP_DIR = pathlib.Path("/backups")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
