@@ -9,7 +9,7 @@ scheduler:
   daily_notification_time: "10:00"
   reminder_time: "18:00"
   report_time: "22:00"
-  rotation_start: "2025-11-01"
+  rotation_start: "2025-11-03"
   extended_interval_weeks: 5
   general_interval_weeks: 26
 database:
