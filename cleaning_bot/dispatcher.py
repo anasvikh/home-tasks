@@ -358,8 +358,27 @@ async def on_task_completed(update, context) -> None:
         reply_markup=keyboard,
     )
 
-    await _refresh_group_task_message(context, assignment, view=view)
-    await _refresh_personal_task_message(context, assignment, view=view)
+    chat = message.chat
+    chat_id = getattr(chat, "id", None) if chat else None
+    message_id = getattr(message, "message_id", None)
+    if chat and chat.type in {"group", "supergroup"}:
+        await _refresh_group_task_message(
+            context,
+            assignment,
+            view=view,
+            skip_chat_id=chat_id,
+            skip_message_id=message_id,
+        )
+        await _refresh_personal_task_message(context, assignment, view=view)
+    else:
+        await _refresh_group_task_message(context, assignment, view=view)
+        await _refresh_personal_task_message(
+            context,
+            assignment,
+            view=view,
+            skip_chat_id=chat_id,
+            skip_message_id=message_id,
+        )
 
 
 async def send_daily_notifications(app) -> None:
@@ -568,7 +587,12 @@ def _build_task_view(
 
 
 async def _refresh_group_task_message(
-    context, assignment: Assignment, *, view: TaskView | None = None
+    context,
+    assignment: Assignment,
+    *,
+    view: TaskView | None = None,
+    skip_chat_id: int | None = None,
+    skip_message_id: int | None = None,
 ) -> None:
     app = context.application
     store = app.bot_data.get("group_task_messages", {})
@@ -580,6 +604,12 @@ async def _refresh_group_task_message(
     app_ctx: AppContext = app.bot_data["app_context"]
     if view is None:
         view = _build_task_view(app_ctx, assignment.task_date, assignment.user_id)
+    if (
+        skip_message_id is not None
+        and message_ref.message_id == skip_message_id
+        and (skip_chat_id is None or message_ref.chat_id == skip_chat_id)
+    ):
+        return
     text = view.group_text
     keyboard = view.keyboard
 
@@ -620,7 +650,12 @@ def _remove_personal_task_message(app, task_date: date, user_id: int) -> None:
 
 
 async def _refresh_personal_task_message(
-    context, assignment: Assignment, *, view: TaskView | None = None
+    context,
+    assignment: Assignment,
+    *,
+    view: TaskView | None = None,
+    skip_chat_id: int | None = None,
+    skip_message_id: int | None = None,
 ) -> None:
     app = context.application
     store = app.bot_data.get("personal_task_messages", {})
@@ -632,6 +667,12 @@ async def _refresh_personal_task_message(
     app_ctx: AppContext = app.bot_data["app_context"]
     if view is None:
         view = _build_task_view(app_ctx, assignment.task_date, assignment.user_id)
+    if (
+        skip_message_id is not None
+        and message_ref.message_id == skip_message_id
+        and (skip_chat_id is None or message_ref.chat_id == skip_chat_id)
+    ):
+        return
     text = view.personal_text
     keyboard = view.keyboard
 
