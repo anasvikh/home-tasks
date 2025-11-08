@@ -336,15 +336,8 @@ async def on_task_completed(update, context) -> None:
         keyboard = build_keyboard(remaining)
     else:
         assignments = app_ctx.db.list_assignments_for_user(task_date, assignment.user_id)
-        include_completed = True
+        new_text = build_personal_message(assignments, task_date)
         if message.chat and message.chat.type in {"group", "supergroup"}:
-            include_completed = False
-        new_text = build_personal_message(
-            assignments,
-            task_date,
-            include_completed=include_completed,
-        )
-        if not include_completed:
             owner_name = next(
                 (u.name for u in app_ctx.users if u.telegram_id == assignment.user_id),
                 "",
@@ -480,11 +473,7 @@ def build_group_blocks(
         assignments = assignments_by_user.get(user.telegram_id, [])
         if not assignments:
             continue
-        text = build_personal_message(
-            assignments,
-            task_date,
-            include_completed=False,
-        )
+        text = build_personal_message(assignments, task_date)
         keyboard = build_keyboard(assignments)
         blocks.append(
             GroupBlock(
@@ -563,11 +552,7 @@ async def _refresh_group_task_message(context, assignment: Assignment) -> None:
         assignment.task_date,
         assignment.user_id,
     )
-    text = build_personal_message(
-        assignments,
-        assignment.task_date,
-        include_completed=False,
-    )
+    text = build_personal_message(assignments, assignment.task_date)
     owner_name = next(
         (u.name for u in app_ctx.users if u.telegram_id == assignment.user_id),
         "",
