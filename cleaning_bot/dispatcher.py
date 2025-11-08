@@ -47,6 +47,14 @@ class PersonalTaskMessage:
     message_id: int
 
 
+@dataclass
+class TaskView:
+    assignments: List[Assignment]
+    personal_text: str
+    group_text: str
+    keyboard: "InlineKeyboardMarkup | None"
+
+
 def register_handlers(app: "Application", ctx: AppContext) -> None:
     from telegram.ext import CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
@@ -314,16 +322,19 @@ async def on_task_completed(update, context) -> None:
 
     from telegram.constants import ParseMode
 
+    view = _build_task_view(app_ctx, assignment.task_date, assignment.user_id)
+
     message = query.message
     if not message:
-        await _refresh_group_task_message(context, assignment)
+        await _refresh_group_task_message(context, assignment, view=view)
+        await _refresh_personal_task_message(context, assignment, view=view)
         return
 
     task_date = assignment.task_date
     is_reminder = bool(message.text and message.text.startswith("Напоминаю"))
 
     if is_reminder:
-        remaining = app_ctx.db.list_incomplete_for_user(task_date, assignment.user_id)
+        remaining = [a for a in view.assignments if not a.completed]
         if remaining:
             levels_line = format_levels_line(remaining)
             parts = ["Напоминаю, что сегодня ещё есть невыполненные задачи:"]
@@ -333,25 +344,13 @@ async def on_task_completed(update, context) -> None:
             new_text = "\n".join(parts)
         else:
             new_text = "Все задачи на сегодня выполнены! 🎉"
-        keyboard = build_keyboard(remaining)
+        keyboard = view.keyboard
     else:
-        assignments = app_ctx.db.list_assignments_for_user(task_date, assignment.user_id)
-        include_completed = True
         if message.chat and message.chat.type in {"group", "supergroup"}:
-            include_completed = False
-        new_text = build_personal_message(
-            assignments,
-            task_date,
-            include_completed=include_completed,
-        )
-        if not include_completed:
-            owner_name = next(
-                (u.name for u in app_ctx.users if u.telegram_id == assignment.user_id),
-                "",
-            )
-            if owner_name:
-                new_text = f"*{owner_name}*\n{new_text}"
-        keyboard = build_keyboard(assignments)
+            new_text = view.group_text
+        else:
+            new_text = view.personal_text
+        keyboard = view.keyboard
 
     await query.edit_message_text(
         text=new_text,
@@ -359,8 +358,27 @@ async def on_task_completed(update, context) -> None:
         reply_markup=keyboard,
     )
 
-    await _refresh_group_task_message(context, assignment)
-    await _refresh_personal_task_message(context, assignment)
+    chat = message.chat
+    chat_id = getattr(chat, "id", None) if chat else None
+    message_id = getattr(message, "message_id", None)
+    if chat and chat.type in {"group", "supergroup"}:
+        await _refresh_group_task_message(
+            context,
+            assignment,
+            view=view,
+            skip_chat_id=chat_id,
+            skip_message_id=message_id,
+        )
+        await _refresh_personal_task_message(context, assignment, view=view)
+    else:
+        await _refresh_group_task_message(context, assignment, view=view)
+        await _refresh_personal_task_message(
+            context,
+            assignment,
+            view=view,
+            skip_chat_id=chat_id,
+            skip_message_id=message_id,
+        )
 
 
 async def send_daily_notifications(app) -> None:
@@ -480,11 +498,7 @@ def build_group_blocks(
         assignments = assignments_by_user.get(user.telegram_id, [])
         if not assignments:
             continue
-        text = build_personal_message(
-            assignments,
-            task_date,
-            include_completed=False,
-        )
+        text = build_personal_message(assignments, task_date)
         keyboard = build_keyboard(assignments)
         blocks.append(
             GroupBlock(
@@ -550,7 +564,36 @@ def _remove_group_task_message(app, task_date: date, user_id: int) -> None:
     store.pop((task_date.isoformat(), user_id), None)
 
 
-async def _refresh_group_task_message(context, assignment: Assignment) -> None:
+def _build_task_view(
+    app_ctx: AppContext, task_date: date, user_id: int
+) -> TaskView:
+    assignments = app_ctx.db.list_assignments_for_user(task_date, user_id)
+    personal_text = build_personal_message(assignments, task_date)
+    owner_name = next(
+        (u.name for u in app_ctx.users if u.telegram_id == user_id),
+        "",
+    )
+    if owner_name:
+        group_text = f"*{owner_name}*\n{personal_text}"
+    else:
+        group_text = personal_text
+    keyboard = build_keyboard(assignments)
+    return TaskView(
+        assignments=assignments,
+        personal_text=personal_text,
+        group_text=group_text,
+        keyboard=keyboard,
+    )
+
+
+async def _refresh_group_task_message(
+    context,
+    assignment: Assignment,
+    *,
+    view: TaskView | None = None,
+    skip_chat_id: int | None = None,
+    skip_message_id: int | None = None,
+) -> None:
     app = context.application
     store = app.bot_data.get("group_task_messages", {})
     key = (assignment.task_date.isoformat(), assignment.user_id)
@@ -559,22 +602,16 @@ async def _refresh_group_task_message(context, assignment: Assignment) -> None:
         return
 
     app_ctx: AppContext = app.bot_data["app_context"]
-    assignments = app_ctx.db.list_assignments_for_user(
-        assignment.task_date,
-        assignment.user_id,
-    )
-    text = build_personal_message(
-        assignments,
-        assignment.task_date,
-        include_completed=False,
-    )
-    owner_name = next(
-        (u.name for u in app_ctx.users if u.telegram_id == assignment.user_id),
-        "",
-    )
-    if owner_name:
-        text = f"*{owner_name}*\n{text}"
-    keyboard = build_keyboard(assignments)
+    if view is None:
+        view = _build_task_view(app_ctx, assignment.task_date, assignment.user_id)
+    if (
+        skip_message_id is not None
+        and message_ref.message_id == skip_message_id
+        and (skip_chat_id is None or message_ref.chat_id == skip_chat_id)
+    ):
+        return
+    text = view.group_text
+    keyboard = view.keyboard
 
     from telegram.constants import ParseMode
     from telegram.error import TelegramError
@@ -612,7 +649,14 @@ def _remove_personal_task_message(app, task_date: date, user_id: int) -> None:
     store.pop((task_date.isoformat(), user_id), None)
 
 
-async def _refresh_personal_task_message(context, assignment: Assignment) -> None:
+async def _refresh_personal_task_message(
+    context,
+    assignment: Assignment,
+    *,
+    view: TaskView | None = None,
+    skip_chat_id: int | None = None,
+    skip_message_id: int | None = None,
+) -> None:
     app = context.application
     store = app.bot_data.get("personal_task_messages", {})
     key = (assignment.task_date.isoformat(), assignment.user_id)
@@ -621,12 +665,16 @@ async def _refresh_personal_task_message(context, assignment: Assignment) -> Non
         return
 
     app_ctx: AppContext = app.bot_data["app_context"]
-    assignments = app_ctx.db.list_assignments_for_user(
-        assignment.task_date,
-        assignment.user_id,
-    )
-    text = build_personal_message(assignments, assignment.task_date)
-    keyboard = build_keyboard(assignments)
+    if view is None:
+        view = _build_task_view(app_ctx, assignment.task_date, assignment.user_id)
+    if (
+        skip_message_id is not None
+        and message_ref.message_id == skip_message_id
+        and (skip_chat_id is None or message_ref.chat_id == skip_chat_id)
+    ):
+        return
+    text = view.personal_text
+    keyboard = view.keyboard
 
     from telegram.constants import ParseMode
     from telegram.error import TelegramError
