@@ -64,6 +64,14 @@ class Database:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bot_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
 
     def sync_users(self, users: Iterable[User]) -> None:
         with self.connect() as conn:
@@ -191,6 +199,43 @@ class Database:
                 )
             )
         return results
+
+    def get_pause_start(self) -> Optional[date]:
+        value = self._get_state("pause_start")
+        if not value:
+            return None
+        return date.fromisoformat(value)
+
+    def set_pause_start(self, start: date) -> None:
+        self._set_state("pause_start", start.isoformat())
+
+    def clear_pause(self) -> None:
+        self._delete_state("pause_start")
+
+    def _get_state(self, key: str) -> Optional[str]:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM bot_state WHERE key=?",
+                (key,),
+            ).fetchone()
+        if not row:
+            return None
+        return str(row[0])
+
+    def _set_state(self, key: str, value: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO bot_state(key, value)
+                VALUES(?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                """,
+                (key, value),
+            )
+
+    def _delete_state(self, key: str) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM bot_state WHERE key=?", (key,))
 
     @staticmethod
     def _row_to_assignment(row: sqlite3.Row) -> Assignment:

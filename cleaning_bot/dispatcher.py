@@ -55,6 +55,125 @@ class TaskView:
     keyboard: "InlineKeyboardMarkup | None"
 
 
+def _is_admin(ctx: AppContext, user_id: int | None) -> bool:
+    if user_id is None:
+        return False
+    return user_id in ctx.config.bot.admin_ids
+
+
+def _is_paused_on(ctx: AppContext, target: date | None = None) -> bool:
+    db = getattr(ctx, "db", None)
+    if not db or not hasattr(db, "get_pause_start"):
+        return False
+
+    pause_start = db.get_pause_start()
+    if not pause_start:
+        return False
+    if target is None:
+        target = datetime.now().date()
+    return target >= pause_start
+
+
+def _build_resume_keyboard():
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(text="▶️ Возобновить", callback_data="control:resume")]]
+    )
+
+
+def _build_pause_keyboard():
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(text="⏸ Поставить на паузу", callback_data="control:pause")]]
+    )
+
+
+def build_pause_notice(ctx: AppContext) -> Tuple[str, "InlineKeyboardMarkup"]:
+    db = getattr(ctx, "db", None)
+    pause_start = None
+    if db and hasattr(db, "get_pause_start"):
+        pause_start = db.get_pause_start()
+    if not pause_start:
+        pause_start = datetime.now().date()
+    text = (
+        "Задачи сейчас на паузе."
+        f" Пауза действует с {pause_start.strftime('%d.%m.%Y')}."
+        "\nНажми кнопку, чтобы возобновить формирование задач."
+    )
+    return text, _build_resume_keyboard()
+
+
+async def _respond_with_pause(text, keyboard, chat, message, context) -> None:
+    if message:
+        await message.reply_text(text, reply_markup=keyboard)
+        return
+    if chat:
+        await context.bot.send_message(
+            chat_id=chat.id,
+            text=text,
+            reply_markup=keyboard,
+        )
+
+
+def _schedule_pause(ctx: AppContext) -> Tuple[str, "InlineKeyboardMarkup"]:
+    today = datetime.now().date()
+    db = getattr(ctx, "db", None)
+    if not db or not hasattr(db, "get_pause_start"):
+        return (
+            "Не удалось включить паузу: база данных недоступна.",
+            _build_pause_keyboard(),
+        )
+
+    pause_start = db.get_pause_start()
+    if pause_start and pause_start <= today:
+        text = (
+            "Задачи уже на паузе."
+            f" Пауза действует с {pause_start.strftime('%d.%m.%Y')}."
+            "\nИспользуй кнопку ниже, чтобы возобновить задачи."
+        )
+        return text, _build_resume_keyboard()
+
+    new_start = today + timedelta(days=1)
+    db.set_pause_start(new_start)
+    text = (
+        "Задачи будут на паузе."
+        f" С {new_start.strftime('%d.%m.%Y')} бот перестанет формировать задания,"
+        " напоминания и статистику."
+    )
+    return text, _build_resume_keyboard()
+
+
+def _resume_tasks(ctx: AppContext) -> Tuple[str, "InlineKeyboardMarkup"]:
+    db = getattr(ctx, "db", None)
+    if not db or not hasattr(db, "get_pause_start"):
+        return (
+            "Не удалось отключить паузу: база данных недоступна.",
+            _build_pause_keyboard(),
+        )
+
+    pause_start = db.get_pause_start()
+    if not pause_start:
+        text = "Сейчас пауза не активна."
+        return text, _build_pause_keyboard()
+
+    db.clear_pause()
+    today = datetime.now().date()
+    if pause_start > today:
+        text = (
+            "Пауза отменена."
+            f" Планировалось приостановить задачи с {pause_start.strftime('%d.%m.%Y')},"
+            " но режим уже отключён."
+        )
+    else:
+        text = (
+            "Задачи возобновлены."
+            f" Пауза, начавшаяся {pause_start.strftime('%d.%m.%Y')}, завершена."
+        )
+    return text, _build_pause_keyboard()
+
+
 def register_handlers(app: "Application", ctx: AppContext) -> None:
     from telegram.ext import CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
@@ -63,6 +182,8 @@ def register_handlers(app: "Application", ctx: AppContext) -> None:
     app.add_handler(CommandHandler("chatid", chat_id))
     app.add_handler(CommandHandler("tasks", tasks_command))
     app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("pause", pause_command))
+    app.add_handler(CommandHandler("resume", resume_command))
     app.add_handler(
         MessageHandler(
             filters.ChatType.PRIVATE & ~filters.COMMAND,
@@ -76,6 +197,7 @@ def register_handlers(app: "Application", ctx: AppContext) -> None:
         )
     )
     app.add_handler(CallbackQueryHandler(handle_quick_action, pattern=r"^quick_action:"))
+    app.add_handler(CallbackQueryHandler(handle_control_action, pattern=r"^control:"))
     app.add_handler(CallbackQueryHandler(on_task_completed, pattern=r"^task_done:"))
 
 
@@ -88,6 +210,8 @@ async def setup_bot_commands(app: "Application") -> None:
         BotCommand("start", "Показать приветствие"),
         BotCommand("tasks", "Показать мои задачи"),
         BotCommand("stats", "Показать статистику"),
+        BotCommand("pause", "Поставить задачи на паузу"),
+        BotCommand("resume", "Возобновить задачи"),
     ]
 
     await app.bot.set_my_commands(commands)
@@ -108,6 +232,14 @@ def build_command_hint_keyboard():
             InlineKeyboardButton(
                 text="📊 Статистика", callback_data="quick_action:stats"
             )
+        ],
+        [
+            InlineKeyboardButton(
+                text="⏸ Пауза задач", callback_data="control:pause"
+            ),
+            InlineKeyboardButton(
+                text="▶️ Возобновить", callback_data="control:resume"
+            ),
         ],
     ]
 
@@ -135,6 +267,12 @@ async def welcome_on_group_mention(update, context) -> None:
 
 
 async def welcome(update, context) -> None:
+    app_ctx = context.application.bot_data["app_context"]
+    if _is_paused_on(app_ctx):
+        text, keyboard = build_pause_notice(app_ctx)
+        await update.effective_message.reply_text(text, reply_markup=keyboard)
+        return
+
     intro = (
         "Привет! Я бот для распределения домашних дел."
         "\n\nКаждое утро я буду отправлять твой список задач с кнопками для отметки"
@@ -155,6 +293,10 @@ async def chat_id(update, context) -> None:
     from telegram.constants import ParseMode
 
     app_ctx = context.application.bot_data["app_context"]
+    if _is_paused_on(app_ctx):
+        text, keyboard = build_pause_notice(app_ctx)
+        await update.effective_message.reply_text(text, reply_markup=keyboard)
+        return
     user_id = update.effective_user.id if update.effective_user else None
     if user_id not in app_ctx.config.bot.admin_ids:
         await update.message.reply_text("Команда доступна только администраторам бота.")
@@ -183,6 +325,34 @@ async def stats_command(update, context) -> None:
     await _send_stats(context, update.effective_message)
 
 
+async def pause_command(update, context) -> None:
+    app_ctx = context.application.bot_data["app_context"]
+    user = update.effective_user
+    user_id = user.id if user else None
+    if not _is_admin(app_ctx, user_id):
+        await update.effective_message.reply_text(
+            "Команда доступна только администраторам бота."
+        )
+        return
+
+    text, keyboard = _schedule_pause(app_ctx)
+    await update.effective_message.reply_text(text, reply_markup=keyboard)
+
+
+async def resume_command(update, context) -> None:
+    app_ctx = context.application.bot_data["app_context"]
+    user = update.effective_user
+    user_id = user.id if user else None
+    if not _is_admin(app_ctx, user_id):
+        await update.effective_message.reply_text(
+            "Команда доступна только администраторам бота."
+        )
+        return
+
+    text, keyboard = _resume_tasks(app_ctx)
+    await update.effective_message.reply_text(text, reply_markup=keyboard)
+
+
 async def handle_quick_action(update, context) -> None:
     query = update.callback_query
     if not query or not query.data:
@@ -205,11 +375,43 @@ async def handle_quick_action(update, context) -> None:
         await query.answer()
 
 
+async def handle_control_action(update, context) -> None:
+    query = update.callback_query
+    if not query or not query.data:
+        return
+
+    action = query.data.split(":", 1)[1]
+    app_ctx = context.application.bot_data["app_context"]
+    user = query.from_user
+    user_id = user.id if user else None
+
+    if not _is_admin(app_ctx, user_id):
+        await query.answer("Команда доступна только администраторам.", show_alert=True)
+        return
+
+    if action == "pause":
+        text, keyboard = _schedule_pause(app_ctx)
+    elif action == "resume":
+        text, keyboard = _resume_tasks(app_ctx)
+    else:
+        await query.answer()
+        return
+
+    await query.answer()
+    message = query.message
+    if message:
+        await message.edit_text(text, reply_markup=keyboard)
+
+
 async def _send_tasks(context, chat, user, message):
     from telegram.constants import ParseMode
 
     app_ctx = context.application.bot_data["app_context"]
     today = datetime.now().date()
+    if _is_paused_on(app_ctx, today):
+        text, keyboard = build_pause_notice(app_ctx)
+        await _respond_with_pause(text, keyboard, chat, message, context)
+        return
     assignments_by_user = ensure_assignments_for_date(app_ctx, today)
 
     async def respond(text, **kwargs):
@@ -273,6 +475,10 @@ async def _send_stats(context, message, chat=None):
 
     app_ctx = context.application.bot_data["app_context"]
     today = datetime.now().date()
+    if _is_paused_on(app_ctx, today):
+        text, keyboard = build_pause_notice(app_ctx)
+        await _respond_with_pause(text, keyboard, chat, message, context)
+        return
 
     week_start = today - timedelta(days=today.weekday())
     week_end = week_start + timedelta(days=6)
@@ -386,6 +592,8 @@ async def send_daily_notifications(app) -> None:
 
     ctx: AppContext = app.bot_data["app_context"]
     today = datetime.now().date()
+    if _is_paused_on(ctx, today):
+        return
     assignments_by_user = ensure_assignments_for_date(ctx, today)
     group_chat_id = ctx.config.bot.group_chat_id
 
@@ -420,6 +628,8 @@ async def send_evening_reminders(app) -> None:
 
     ctx: AppContext = app.bot_data["app_context"]
     today = datetime.now().date()
+    if _is_paused_on(ctx, today):
+        return
     for user in ctx.users:
         incomplete = ctx.db.list_incomplete_for_user(today, user.telegram_id)
         if not incomplete:
@@ -445,6 +655,8 @@ async def send_daily_report(app) -> None:
 
     ctx: AppContext = app.bot_data["app_context"]
     today = datetime.now().date()
+    if _is_paused_on(ctx, today):
+        return
     rows = ctx.db.daily_stats(today, today)
     report = format_daily_report(today, rows)
     await app.bot.send_message(
@@ -455,8 +667,26 @@ async def send_daily_report(app) -> None:
 
 
 def ensure_assignments_for_date(ctx: AppContext, target: date) -> Dict[int, List[Assignment]]:
+    if _is_paused_on(ctx, target):
+        return {}
+
     assignments = ctx.db.list_assignments(target)
     if assignments:
+        return _group_by_user(assignments)
+
+    if target.weekday() == 6:  # Sunday
+        previous_day = target - timedelta(days=1)
+        for user in ctx.users:
+            leftovers = ctx.db.list_incomplete_for_user(previous_day, user.telegram_id)
+            for assignment in leftovers:
+                ctx.db.add_assignment(
+                    target,
+                    user.telegram_id,
+                    assignment.room,
+                    assignment.level,
+                    assignment.description,
+                )
+        assignments = ctx.db.list_assignments(target)
         return _group_by_user(assignments)
 
     levels = expand_levels(get_day_levels(target, ctx.config.scheduler))
